@@ -408,6 +408,36 @@ function App() {
     })
   }, [selectedProjectId])
 
+  useEffect(() => {
+    if (!selectedProjectId) {
+      return undefined
+    }
+
+    const stream = new EventSource(`/api/projects/${selectedProjectId}/events`)
+    stream.onmessage = (event) => {
+      const payload = JSON.parse(event.data || '{}')
+
+      if (payload.type === 'project-deleted') {
+        loadProjects().catch((loadError) => {
+          setError(loadError.message)
+        })
+        return
+      }
+
+      loadTree(selectedProjectId, selectedNodeId).catch((loadError) => {
+        setError(loadError.message)
+      })
+    }
+
+    stream.onerror = () => {
+      stream.close()
+    }
+
+    return () => {
+      stream.close()
+    }
+  }, [selectedNodeId, selectedProjectId])
+
   const selectedNode = tree?.nodes.find((node) => node.id === selectedNodeId) || null
   const editTargetNode = tree?.nodes.find((node) => node.id === editTargetId) || null
   const projectSettings = tree?.project?.settings || defaultProjectSettings

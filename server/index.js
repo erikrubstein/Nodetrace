@@ -3,14 +3,17 @@ import path from 'node:path'
 import express from 'express'
 import multer from 'multer'
 import Database from 'better-sqlite3'
+import { renderMobileCapturePage } from './mobileCapturePage.js'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
+const host = process.env.HOST || '0.0.0.0'
 const baseDir = process.cwd()
 const dataDir = path.join(baseDir, 'data')
 const uploadsDir = path.join(dataDir, 'uploads')
 const dbPath = path.join(dataDir, 'photomap.db')
 const distDir = path.join(baseDir, 'dist')
+const projectEventClients = new Map()
 
 fs.mkdirSync(uploadsDir, { recursive: true })
 
@@ -402,8 +405,24 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage })
 
+function broadcastProjectEvent(projectId, payload = { type: 'project-updated' }) {
+  const listeners = projectEventClients.get(projectId)
+  if (!listeners || listeners.size === 0) {
+    return
+  }
+
+  const body = `data: ${JSON.stringify(payload)}\n\n`
+  for (const response of listeners) {
+    response.write(body)
+  }
+}
+
 app.use(express.json({ limit: '5mb' }))
 app.use('/uploads', express.static(uploadsDir))
+
+app.get('/capture', (_req, res) => {
+  res.type('html').send(renderMobileCapturePage())
+})
 
 app.get('/api/projects', (req, res) => {
   const projects = listProjects.all().map(serializeProject)
@@ -439,6 +458,40 @@ app.get('/api/projects/:id/tree', (req, res, next) => {
   }
 })
 
+app.get('/api/projects/:id/events', (req, res, next) => {
+  try {
+    const projectId = Number(req.params.id)
+    assertProject(projectId)
+
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache, no-transform')
+    res.setHeader('Connection', 'keep-alive')
+    res.flushHeaders?.()
+    res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`)
+
+    let listeners = projectEventClients.get(projectId)
+    if (!listeners) {
+      listeners = new Set()
+      projectEventClients.set(projectId, listeners)
+    }
+    listeners.add(res)
+
+    const heartbeat = setInterval(() => {
+      res.write(': keep-alive\n\n')
+    }, 20000)
+
+    req.on('close', () => {
+      clearInterval(heartbeat)
+      listeners.delete(res)
+      if (listeners.size === 0) {
+        projectEventClients.delete(projectId)
+      }
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.patch('/api/projects/:id/settings', (req, res, next) => {
   try {
     const projectId = Number(req.params.id)
@@ -454,6 +507,7 @@ app.patch('/api/projects/:id/settings', (req, res, next) => {
       settings: nextSettings,
     })
 
+    broadcastProjectEvent(projectId)
     res.json(serializeProject(assertProject(projectId)))
   } catch (error) {
     next(error)
@@ -463,6 +517,7 @@ app.patch('/api/projects/:id/settings', (req, res, next) => {
 app.delete('/api/projects/:id', (req, res, next) => {
   try {
     const projectId = Number(req.params.id)
+    broadcastProjectEvent(projectId, { type: 'project-deleted' })
     deleteProjectRecursive(projectId)
     res.status(204).send()
   } catch (error) {
@@ -496,6 +551,7 @@ app.post('/api/projects/:id/folders', (req, res, next) => {
       original_filename: null,
     })
 
+    broadcastProjectEvent(projectId)
     res.status(201).json(serializeNode(assertNode(nodeId)))
   } catch (error) {
     next(error)
@@ -533,6 +589,7 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
       original_filename: originalFile.originalname,
     })
 
+    broadcastProjectEvent(projectId)
     res.status(201).json(serializeNode(assertNode(nodeId)))
   } catch (error) {
     next(error)
@@ -552,6 +609,7 @@ app.patch('/api/nodes/:id', (req, res, next) => {
       tags: parseTags(req.body.tags),
     })
 
+    broadcastProjectEvent(node.project_id)
     res.json(serializeNode(assertNode(nodeId)))
   } catch (error) {
     next(error)
@@ -575,6 +633,7 @@ app.post('/api/nodes/:id/move', (req, res, next) => {
       parent_id: parentId,
     })
 
+    broadcastProjectEvent(node.project_id)
     res.json(serializeNode(assertNode(nodeId)))
   } catch (error) {
     next(error)
@@ -587,6 +646,7 @@ app.delete('/api/nodes/:id', (req, res, next) => {
     const node = assertNode(nodeId)
     ensureNotRoot(node)
     deleteNodeRecursive(nodeId, node.project_id)
+    broadcastProjectEvent(node.project_id)
     res.status(204).send()
   } catch (error) {
     next(error)
@@ -597,7 +657,7 @@ if (fs.existsSync(distDir)) {
   app.use(express.static(distDir))
 
   app.use((req, res, next) => {
-    if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
+    if (req.path === '/capture' || req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
       return next()
     }
 
@@ -613,6 +673,6 @@ app.use((error, req, res, _next) => {
   res.status(status).json({ error: error.message || 'Unexpected server error' })
 })
 
-app.listen(port, () => {
-  console.log(`PhotoMap server listening on http://localhost:${port}`)
+app.listen(port, host, () => {
+  console.log(`PhotoMap server listening on http://${host}:${port}`)
 })
