@@ -260,6 +260,10 @@ select {
   background: var(--folder-surface);
 }
 
+.graph-node.collapsed-node .graph-node__visual {
+  background: var(--folder-surface);
+}
+
 .graph-node:hover .graph-node__visual {
   box-shadow:
     0 0 0 2px var(--hover-stroke),
@@ -303,6 +307,33 @@ select {
   display: grid;
   place-items: center;
   color: var(--muted);
+}
+
+.graph-node__collapsed-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 4px;
+  padding: 8px;
+}
+
+.graph-node__collapsed-thumb {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 3px;
+  object-fit: cover;
+  background: var(--surface);
+  display: block;
+}
+
+.graph-node__collapsed-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.7rem;
 }
 
 .graph-node__placeholder i {
@@ -360,6 +391,26 @@ select {
   background: var(--panel);
   color: var(--text);
   font-size: 0.82rem;
+}
+
+.node-context-menu {
+  position: absolute;
+  z-index: 30;
+  min-width: 140px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px var(--elevation);
+}
+
+.node-context-menu button {
+  text-align: left;
+}
+
+.node-context-menu .danger-text {
+  color: var(--danger);
 }
 
 .inspector-resize-handle {

@@ -47,6 +47,7 @@ db.exec(`
     name TEXT NOT NULL,
     notes TEXT DEFAULT '',
     tags_json TEXT DEFAULT '[]',
+    collapsed INTEGER DEFAULT 0,
     image_path TEXT,
     preview_path TEXT,
     original_filename TEXT,
@@ -65,6 +66,9 @@ if (!projectColumns.some((column) => column.name === 'settings_json')) {
 const nodeColumns = db.prepare(`PRAGMA table_info(nodes)`).all()
 if (!nodeColumns.some((column) => column.name === 'preview_path')) {
   db.exec(`ALTER TABLE nodes ADD COLUMN preview_path TEXT`)
+}
+if (!nodeColumns.some((column) => column.name === 'collapsed')) {
+  db.exec(`ALTER TABLE nodes ADD COLUMN collapsed INTEGER DEFAULT 0`)
 }
 
 const insertProject = db.prepare(`
@@ -120,6 +124,7 @@ const updateNodeStmt = db.prepare(`
   SET name = @name,
       notes = @notes,
       tags_json = @tags_json,
+      collapsed = COALESCE(@collapsed, collapsed),
       updated_at = @updated_at
   WHERE id = @id
 `)
@@ -180,13 +185,14 @@ const createNode = db.transaction((payload) => {
   return result.lastInsertRowid
 })
 
-const updateNode = db.transaction(({ id, project_id, name, notes, tags }) => {
+const updateNode = db.transaction(({ id, project_id, name, notes, tags, collapsed }) => {
   const now = new Date().toISOString()
   updateNodeStmt.run({
     id,
     name,
     notes,
     tags_json: JSON.stringify(tags),
+    collapsed,
     updated_at: now,
   })
   updateProjectTimestamp.run(now, project_id)
@@ -310,6 +316,7 @@ function serializeNode(row) {
   return {
     ...row,
     tags: JSON.parse(row.tags_json || '[]'),
+    collapsed: Boolean(row.collapsed),
     hasImage: row.type === 'photo' && Boolean(row.image_path),
     imageUrl: row.image_path ? `/uploads/${row.image_path.replaceAll('\\', '/')}` : null,
     previewUrl: row.preview_path ? `/uploads/${row.preview_path.replaceAll('\\', '/')}` : null,
@@ -706,6 +713,28 @@ app.patch('/api/nodes/:id', (req, res, next) => {
       name: String(req.body.name || '').trim() || node.name,
       notes: String(req.body.notes || '').trim(),
       tags: parseTags(req.body.tags),
+      collapsed: typeof req.body.collapsed === 'boolean' ? (req.body.collapsed ? 1 : 0) : null,
+    })
+
+    broadcastProjectEvent(node.project_id)
+    res.json(serializeNode(assertNode(nodeId)))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/nodes/:id/collapse', (req, res, next) => {
+  try {
+    const nodeId = Number(req.params.id)
+    const node = assertNode(nodeId)
+
+    updateNode({
+      id: nodeId,
+      project_id: node.project_id,
+      name: node.name,
+      notes: node.notes || '',
+      tags: JSON.parse(node.tags_json || '[]'),
+      collapsed: req.body.collapsed ? 1 : 0,
     })
 
     broadcastProjectEvent(node.project_id)

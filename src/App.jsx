@@ -48,6 +48,7 @@ function IconButton({ children, tooltip, ...props }) {
         onMouseDown?.(event)
       }}
       onPointerDown={(event) => {
+        event.preventDefault()
         event.stopPropagation()
         onPointerDown?.(event)
       }}
@@ -162,6 +163,43 @@ function countLeaves(node) {
   return node.children.reduce((total, child) => total + countLeaves(child), 0)
 }
 
+function countDescendants(node) {
+  if (!node?.children?.length) {
+    return 0
+  }
+
+  return node.children.reduce((total, child) => total + 1 + countDescendants(child), 0)
+}
+
+function buildVisibleTree(node) {
+  if (!node) {
+    return null
+  }
+
+  if (node.collapsed && node.children?.length) {
+    return {
+      ...node,
+      children: [
+        {
+          id: `collapsed-${node.id}`,
+          parent_id: node.id,
+          type: 'collapsed-group',
+          name: `${countDescendants(node)} Items`,
+          collapsedGroupOf: node.id,
+          totalItems: countDescendants(node),
+          previewItems: collectCollapsedPreviewItems(node),
+          children: [],
+        },
+      ],
+    }
+  }
+
+  return {
+    ...node,
+    children: (node.children || []).map((child) => buildVisibleTree(child)),
+  }
+}
+
 function buildLayout(root, settings) {
   if (!root) {
     return { nodes: [], links: [], width: 1600, height: 1000 }
@@ -205,7 +243,8 @@ function buildLayout(root, settings) {
     }
   }
 
-  place(root, 0, 56, 56)
+  const visibleRoot = buildVisibleTree(root)
+  place(visibleRoot, 0, 56, 56)
 
   const byId = new Map(nodes.map((item) => [item.id, item]))
   for (const item of nodes) {
@@ -241,6 +280,28 @@ function buildLayout(root, settings) {
   const height = Math.max(...nodes.map((item) => item.y + NODE_HEIGHT)) + 240
 
   return { nodes, links, width, height }
+}
+
+function collectCollapsedPreviewItems(node, limit = 9, items = []) {
+  if (!node || items.length >= limit) {
+    return items
+  }
+
+  for (const child of node.children || []) {
+    if (items.length >= limit) {
+      break
+    }
+
+    items.push({
+      id: child.id,
+      imageUrl: child.previewUrl || child.imageUrl || null,
+      type: child.type,
+    })
+
+    collectCollapsedPreviewItems(child, limit, items)
+  }
+
+  return items
 }
 
 function findNode(node, targetId) {
@@ -331,6 +392,7 @@ function App() {
   const [projectName, setProjectName] = useState('')
   const [deleteProjectText, setDeleteProjectText] = useState('')
   const [deleteNodeOpen, setDeleteNodeOpen] = useState(false)
+  const [contextMenu, setContextMenu] = useState(null)
   const [dragActive, setDragActive] = useState(false)
   const [dragHoverNodeId, setDragHoverNodeId] = useState(null)
   const [dragPreview, setDragPreview] = useState(null)
@@ -345,6 +407,7 @@ function App() {
   const [previewWidth, setPreviewWidth] = useState(340)
   const [inspectorWidth, setInspectorWidth] = useState(320)
   const [settingsWidth, setSettingsWidth] = useState(280)
+  const [pendingUploadParentId, setPendingUploadParentId] = useState(null)
   const fileInputRef = useRef(null)
   const nameInputRef = useRef(null)
   const viewportRef = useRef(null)
@@ -399,6 +462,15 @@ function App() {
     await loadTree(projectId, preferredNodeId)
   }
 
+  const selectedNode = tree?.nodes.find((node) => node.id === selectedNodeId) || null
+  const editTargetNode = tree?.nodes.find((node) => node.id === editTargetId) || null
+  const projectSettings = tree?.project?.settings || defaultProjectSettings
+  const selectedTreeNode = selectedNodeId ? findNode(tree?.root, selectedNodeId) : null
+  const blockedParentIds = collectDescendantIds(selectedTreeNode)
+  const parentOptions = collectParentOptions(tree?.root, blockedParentIds)
+  const layout = useMemo(() => buildLayout(tree?.root, projectSettings), [tree, projectSettings])
+  const contextMenuNode = tree?.nodes.find((node) => node.id === contextMenu?.nodeId) || null
+
   useEffect(() => {
     async function initialize() {
       try {
@@ -423,7 +495,7 @@ function App() {
   }, [selectedProjectId])
 
   useEffect(() => {
-    if (!selectedProjectId || !selectedNodeId) {
+    if (!selectedProjectId || !selectedNode?.id) {
       return undefined
     }
 
@@ -436,7 +508,7 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: desktopClientName,
-            selectedNodeId,
+            selectedNodeId: selectedNode.id,
           }),
         })
       } catch (publishError) {
@@ -453,7 +525,7 @@ function App() {
       cancelled = true
       window.clearInterval(heartbeat)
     }
-  }, [desktopClientId, desktopClientName, selectedNodeId, selectedProjectId])
+  }, [desktopClientId, desktopClientName, selectedNode?.id, selectedProjectId])
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -484,14 +556,6 @@ function App() {
       stream.close()
     }
   }, [selectedNodeId, selectedProjectId])
-
-  const selectedNode = tree?.nodes.find((node) => node.id === selectedNodeId) || null
-  const editTargetNode = tree?.nodes.find((node) => node.id === editTargetId) || null
-  const projectSettings = tree?.project?.settings || defaultProjectSettings
-  const selectedTreeNode = selectedNodeId ? findNode(tree?.root, selectedNodeId) : null
-  const blockedParentIds = collectDescendantIds(selectedTreeNode)
-  const parentOptions = collectParentOptions(tree?.root, blockedParentIds)
-  const layout = useMemo(() => buildLayout(tree?.root, projectSettings), [tree, projectSettings])
 
   const applyNodeUpdate = useCallback((updatedNode) => {
     setTree((current) => {
@@ -704,6 +768,11 @@ function App() {
         return
       }
 
+      if (event.key === 'Escape') {
+        setContextMenu(null)
+        return
+      }
+
       if ((event.key === 'Backspace' || event.key === 'Delete') && selectedNode && !isTypingTarget) {
         if (selectedNode.parent_id == null) {
           return
@@ -718,6 +787,21 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [selectedNode])
+
+  useEffect(() => {
+    function closeContextMenu(event) {
+      const target = event.target instanceof Element ? event.target : null
+      if (target?.closest('.node-context-menu')) {
+        return
+      }
+      setContextMenu(null)
+    }
+
+    window.addEventListener('pointerdown', closeContextMenu)
+    return () => {
+      window.removeEventListener('pointerdown', closeContextMenu)
+    }
+  }, [])
 
   useEffect(() => {
     if (!selectedNode || !editTargetNode || selectedNode.id !== editTargetId) {
@@ -816,8 +900,8 @@ function App() {
     await persistProjectSettings(defaultProjectSettings)
   }
 
-  async function addFolder() {
-    if (!selectedNode) {
+  async function addFolder(parentId = selectedNode?.id) {
+    if (!parentId || !selectedProjectId) {
       return
     }
 
@@ -829,14 +913,14 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          parentId: selectedNode.id,
+          parentId,
           name: 'New Folder',
           notes: '',
           tags: '',
         }),
       })
 
-      await refresh(selectedProjectId, selectedNode.id)
+      await refresh(selectedProjectId, parentId)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -877,9 +961,29 @@ function App() {
       setError(submitError.message)
     } finally {
       setBusy(false)
+      setPendingUploadParentId(null)
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
+    }
+  }
+
+  async function setCollapsed(nodeId, collapsed) {
+    setBusy(true)
+    setError('')
+
+    try {
+      await api(`/api/nodes/${nodeId}/collapse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ collapsed }),
+      })
+
+      await refresh(selectedProjectId, nodeId)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -1131,7 +1235,9 @@ function App() {
             accept="image/*"
             hidden
             multiple
-            onChange={(event) => uploadFiles(Array.from(event.target.files || []))}
+            onChange={(event) =>
+              uploadFiles(Array.from(event.target.files || []), pendingUploadParentId || selectedNode?.id)
+            }
             type="file"
           />
         </div>
@@ -1222,6 +1328,12 @@ function App() {
         <section
           ref={viewportRef}
           className={`canvas-viewport ${dragActive ? 'drag-active' : ''}`}
+          onContextMenu={(event) => {
+            if (!event.target.closest('.graph-node')) {
+              event.preventDefault()
+              setContextMenu(null)
+            }
+          }}
           onDragEnter={(event) => {
             event.preventDefault()
             if (event.dataTransfer.types.includes('Files')) {
@@ -1290,17 +1402,59 @@ function App() {
                   dragHoverNodeId === item.id ? 'drop-target' : ''
                 } ${projectSettings.imageMode === 'square' ? 'image-square' : 'image-original'} ${
                   item.node.type === 'photo' ? 'photo-node' : 'folder-node'
-                }`}
+                } ${item.node.type === 'collapsed-group' ? 'collapsed-node' : ''}`}
+                onContextMenu={(event) => {
+                  if (item.node.type === 'collapsed-group') {
+                    return
+                  }
+                  event.preventDefault()
+                  event.stopPropagation()
+                  const rect = viewportRef.current?.getBoundingClientRect()
+                  setSelectedNodeId(item.id)
+                  setContextMenu({
+                    nodeId: item.id,
+                    x: event.clientX - (rect?.left || 0),
+                    y: event.clientY - (rect?.top || 0),
+                  })
+                }}
                 onClick={() => {
+                  if (item.node.type === 'collapsed-group') {
+                    return
+                  }
                   void saveNodeDraft(editTargetNode, editForm)
                   setSelectedNodeId(item.id)
                 }}
-                onPointerDown={(event) => beginNodeDrag(item.id, event)}
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (item.node.type === 'collapsed-group') {
+                    return
+                  }
+                  beginNodeDrag(item.id, event)
+                }}
                 style={{ left: `${item.x}px`, top: `${item.y}px` }}
                 type="button"
               >
                 <div className="graph-node__visual">
-                  {item.node.previewUrl || item.node.imageUrl ? (
+                  {item.node.type === 'collapsed-group' ? (
+                    <div className="graph-node__collapsed-grid">
+                      {item.node.previewItems.map((preview) =>
+                        preview.imageUrl ? (
+                          <img
+                            key={preview.id}
+                            className="graph-node__collapsed-thumb"
+                            src={preview.imageUrl}
+                            alt=""
+                            draggable="false"
+                          />
+                        ) : (
+                          <div key={preview.id} className="graph-node__collapsed-thumb graph-node__collapsed-placeholder">
+                            <FolderIcon />
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  ) : item.node.previewUrl || item.node.imageUrl ? (
                     <img src={item.node.previewUrl || item.node.imageUrl} alt={item.node.name} draggable="false" />
                   ) : (
                     <div className="graph-node__placeholder">
@@ -1329,6 +1483,74 @@ function App() {
             {selectedNode ? selectedNode.name : 'No node selected'} | {desktopClientName} |{' '}
             {Math.round(transform.scale * 100)}%
           </div>
+          {contextMenu ? (
+            <div
+              className="node-context-menu"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
+            >
+              <button
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={() => {
+                  setContextMenu(null)
+                  void addFolder(contextMenu.nodeId)
+                }}
+                type="button"
+              >
+                Add Folder
+              </button>
+              <button
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={() => {
+                  setPendingUploadParentId(contextMenu.nodeId)
+                  setContextMenu(null)
+                  fileInputRef.current?.click()
+                }}
+                type="button"
+              >
+                Add Photo
+              </button>
+              {contextMenuNode?.children?.length || contextMenuNode?.collapsed ? (
+                <button
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                  onClick={() => {
+                    setContextMenu(null)
+                    void setCollapsed(contextMenu.nodeId, !contextMenuNode?.collapsed)
+                  }}
+                  type="button"
+                >
+                  {contextMenuNode?.collapsed ? 'Expand' : 'Collapse'}
+                </button>
+              ) : null}
+              <button
+                className="danger-text"
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={() => {
+                  setContextMenu(null)
+                  setSelectedNodeId(contextMenu.nodeId)
+                  setDeleteNodeOpen(true)
+                }}
+                type="button"
+              >
+                Delete
+              </button>
+            </div>
+          ) : null}
         </section>
 
         {inspectorOpen ? (
@@ -1346,7 +1568,11 @@ function App() {
               <div className="inspector__titlebar">Inspector</div>
               <div className="inspector__section">
                 <div className="inspector__title">
-                  {selectedNode ? (selectedNode.type === 'photo' ? 'Photo' : 'Folder') : 'Selection'}
+                  {selectedNode
+                    ? selectedNode.type === 'photo'
+                      ? 'Photo'
+                      : 'Folder'
+                    : 'Selection'}
                 </div>
                 {selectedNode ? (
                   <div className="inspector__name">{selectedNode.name}</div>
