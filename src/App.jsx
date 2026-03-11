@@ -304,6 +304,20 @@ function collectParentOptions(root, blockedIds) {
 }
 
 function App() {
+  const desktopClientId =
+    localStorage.getItem('photomap-desktop-client-id') ||
+    (() => {
+      const generated = `desktop-${crypto.randomUUID()}`
+      localStorage.setItem('photomap-desktop-client-id', generated)
+      return generated
+    })()
+  const desktopClientName =
+    localStorage.getItem('photomap-desktop-client-name') ||
+    (() => {
+      const generated = `Desktop ${desktopClientId.slice(-4)}`
+      localStorage.setItem('photomap-desktop-client-name', generated)
+      return generated
+    })()
   const [projects, setProjects] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [tree, setTree] = useState(null)
@@ -407,6 +421,39 @@ function App() {
       setError(loadError.message)
     })
   }, [selectedProjectId])
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedNodeId) {
+      return undefined
+    }
+
+    let cancelled = false
+
+    async function publishSelection() {
+      try {
+        await api(`/api/projects/${selectedProjectId}/clients/${desktopClientId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: desktopClientName,
+            selectedNodeId,
+          }),
+        })
+      } catch (publishError) {
+        if (!cancelled) {
+          setError(publishError.message)
+        }
+      }
+    }
+
+    publishSelection()
+    const heartbeat = window.setInterval(publishSelection, 15000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(heartbeat)
+    }
+  }, [desktopClientId, desktopClientName, selectedNodeId, selectedProjectId])
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -1279,7 +1326,8 @@ function App() {
           ) : null}
           <div className="canvas-caption">
             {tree?.project?.name || 'No project'} |{' '}
-            {selectedNode ? selectedNode.name : 'No node selected'} | {Math.round(transform.scale * 100)}%
+            {selectedNode ? selectedNode.name : 'No node selected'} | {desktopClientName} |{' '}
+            {Math.round(transform.scale * 100)}%
           </div>
         </section>
 

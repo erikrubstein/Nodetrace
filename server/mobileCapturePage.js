@@ -13,7 +13,6 @@ export function renderMobileCapturePage() {
         --surface: #262626;
         --text: #f4f4f0;
         --muted: #9a9a9a;
-        --accent: #f4f4f0;
       }
 
       @media (prefers-color-scheme: light) {
@@ -23,7 +22,6 @@ export function renderMobileCapturePage() {
           --surface: #ffffff;
           --text: #161616;
           --muted: #6f6f6a;
-          --accent: #161616;
         }
       }
 
@@ -33,68 +31,58 @@ export function renderMobileCapturePage() {
 
       body {
         margin: 0;
-        min-height: 100vh;
+        height: 100svh;
+        overflow: hidden;
         background: var(--bg);
         color: var(--text);
         font-family: "JetBrains Mono", ui-monospace, monospace;
       }
 
       .shell {
-        max-width: 640px;
-        margin: 0 auto;
-        padding: 20px 16px 32px;
-      }
-
-      .header {
-        margin-bottom: 18px;
-      }
-
-      .title {
-        font-size: 1rem;
-        margin-bottom: 6px;
-      }
-
-      .subtitle,
-      .status {
-        color: var(--muted);
-        font-size: 0.82rem;
+        height: 100svh;
+        display: flex;
+        flex-direction: column;
+        padding: 12px;
+        gap: 10px;
       }
 
       .panel {
         background: var(--panel);
         border-radius: 10px;
-        padding: 14px;
+        padding: 10px;
         display: grid;
-        gap: 12px;
+        gap: 8px;
+      }
+
+      .title {
+        font-size: 0.92rem;
       }
 
       label {
         display: grid;
         gap: 6px;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         color: var(--muted);
       }
 
       select,
-      button,
-      input[type="text"] {
+      button {
         width: 100%;
         border: none;
         border-radius: 8px;
         font: inherit;
+      }
+
+      select {
+        background: var(--surface);
+        color: var(--text);
         padding: 12px 10px;
       }
 
-      select,
-      input[type="text"] {
+      button {
         background: var(--surface);
         color: var(--text);
-      }
-
-      button {
-        background: var(--text);
-        color: var(--bg);
-        font-weight: 600;
+        padding: 12px 10px;
       }
 
       .capture-input {
@@ -102,76 +90,70 @@ export function renderMobileCapturePage() {
       }
 
       .capture-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        border-radius: 8px;
+        flex: 1;
+        min-height: 0;
+        border-radius: 14px;
         background: var(--text);
         color: var(--bg);
-        padding: 14px 10px;
-        font-size: 0.9rem;
-        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 1.05rem;
+        font-weight: 700;
+        padding: 24px;
+      }
+
+      .secondary-row {
+        display: grid;
+        gap: 10px;
       }
 
       .status {
         min-height: 1.2em;
+        color: var(--muted);
+        font-size: 0.76rem;
       }
 
       .status.error {
         color: #d46868;
       }
-
-      .hint {
-        color: var(--muted);
-        font-size: 0.75rem;
-        line-height: 1.5;
-      }
     </style>
   </head>
   <body>
     <main class="shell">
-      <div class="header">
-        <div class="title">PhotoMap Capture</div>
-        <div class="subtitle">Take a photo on your phone and send it straight into the selected project node.</div>
-      </div>
-
       <section class="panel">
+        <div class="title">PhotoMap Capture</div>
+
         <label>
           <span>Project</span>
           <select id="projectSelect"></select>
         </label>
 
         <label>
-          <span>Target Node</span>
-          <select id="nodeSelect"></select>
+          <span>Client in Control</span>
+          <select id="clientSelect"></select>
         </label>
-
-        <label>
-          <span>Optional Name</span>
-          <input id="nameInput" type="text" placeholder="<untitled>" />
-        </label>
-
-        <label class="capture-button" for="captureInput">Take Photo</label>
-        <input id="captureInput" class="capture-input" type="file" accept="image/*" capture="environment" />
-
-        <button id="chooseButton" type="button">Choose Existing Photo</button>
 
         <div id="status" class="status"></div>
-        <div class="hint">Open this page on your phone using your computer's network address, for example <code>http://YOUR-PC-IP:3001/capture</code>.</div>
       </section>
+
+      <label class="capture-button" for="captureInput">Tap Anywhere To Take Photo</label>
+      <input id="captureInput" class="capture-input" type="file" accept="image/*" capture="environment" />
+
+      <div class="secondary-row">
+        <button id="chooseButton" type="button">Choose Existing Photo</button>
+      </div>
     </main>
 
     <script>
       const projectSelect = document.getElementById('projectSelect')
-      const nodeSelect = document.getElementById('nodeSelect')
+      const clientSelect = document.getElementById('clientSelect')
       const captureInput = document.getElementById('captureInput')
       const chooseButton = document.getElementById('chooseButton')
-      const nameInput = document.getElementById('nameInput')
       const statusEl = document.getElementById('status')
       const search = new URLSearchParams(window.location.search)
-
-      let projects = []
+      let pollHandle = null
 
       function setStatus(message, isError = false) {
         statusEl.textContent = message
@@ -224,25 +206,8 @@ export function renderMobileCapturePage() {
         }
       }
 
-      function flattenNodes(node, depth = 0, rows = []) {
-        if (!node) {
-          return rows
-        }
-
-        rows.push({
-          id: node.id,
-          label: \`\${'  '.repeat(depth)}\${node.name}\`,
-        })
-
-        for (const child of node.children || []) {
-          flattenNodes(child, depth + 1, rows)
-        }
-
-        return rows
-      }
-
       async function loadProjects() {
-        projects = await api('/api/projects')
+        const projects = await api('/api/projects')
         projectSelect.innerHTML = ''
 
         for (const project of projects) {
@@ -257,36 +222,44 @@ export function renderMobileCapturePage() {
           projectSelect.value = requestedProjectId
         }
 
-        await loadNodes()
+        await loadClients()
       }
 
-      async function loadNodes() {
+      async function loadClients() {
         if (!projectSelect.value) {
-          nodeSelect.innerHTML = ''
+          clientSelect.innerHTML = ''
           return
         }
 
-        const tree = await api(\`/api/projects/\${projectSelect.value}/tree\`)
-        const rows = flattenNodes(tree.root)
-        nodeSelect.innerHTML = ''
+        const clients = await api(\`/api/projects/\${projectSelect.value}/clients\`)
+        const previousClientId = clientSelect.value
+        clientSelect.innerHTML = ''
 
-        for (const row of rows) {
+        if (clients.length === 0) {
           const option = document.createElement('option')
-          option.value = row.id
-          option.textContent = row.label
-          nodeSelect.append(option)
+          option.value = ''
+          option.textContent = 'No active desktop clients'
+          clientSelect.append(option)
+          return
         }
 
-        const requestedParentId = search.get('parentId')
-        if (requestedParentId && rows.some((row) => String(row.id) === requestedParentId)) {
-          nodeSelect.value = requestedParentId
-        } else if (tree.root) {
-          nodeSelect.value = String(tree.root.id)
+        for (const client of clients) {
+          const option = document.createElement('option')
+          option.value = client.id
+          option.textContent = \`\${client.name} -> \${client.selectedNodeName}\`
+          clientSelect.append(option)
+        }
+
+        const requestedClientId = search.get('clientId')
+        if (requestedClientId && clients.some((client) => client.id === requestedClientId)) {
+          clientSelect.value = requestedClientId
+        } else if (previousClientId && clients.some((client) => client.id === previousClientId)) {
+          clientSelect.value = previousClientId
         }
       }
 
       async function uploadSelectedFiles(files) {
-        if (!files.length || !projectSelect.value || !nodeSelect.value) {
+        if (!files.length || !projectSelect.value || !clientSelect.value) {
           return
         }
 
@@ -296,8 +269,8 @@ export function renderMobileCapturePage() {
           for (const file of files) {
             const previewFile = await createPreviewFile(file)
             const formData = new FormData()
-            formData.append('parentId', nodeSelect.value)
-            formData.append('name', nameInput.value.trim() || '<untitled>')
+            formData.append('clientId', clientSelect.value)
+            formData.append('name', '<untitled>')
             formData.append('notes', '')
             formData.append('tags', '')
             formData.append('file', file)
@@ -312,15 +285,22 @@ export function renderMobileCapturePage() {
           }
 
           captureInput.value = ''
-          nameInput.value = ''
           setStatus('Uploaded.')
+          await loadClients()
         } catch (error) {
           setStatus(error.message, true)
         }
       }
 
+      function startClientPolling() {
+        window.clearInterval(pollHandle)
+        pollHandle = window.setInterval(() => {
+          loadClients().catch((error) => setStatus(error.message, true))
+        }, 4000)
+      }
+
       projectSelect.addEventListener('change', () => {
-        loadNodes().catch((error) => setStatus(error.message, true))
+        loadClients().catch((error) => setStatus(error.message, true))
       })
 
       captureInput.addEventListener('change', () => {
@@ -335,7 +315,9 @@ export function renderMobileCapturePage() {
         }, 0)
       })
 
-      loadProjects().catch((error) => setStatus(error.message, true))
+      loadProjects()
+        .then(startClientPolling)
+        .catch((error) => setStatus(error.message, true))
     </script>
   </body>
 </html>`

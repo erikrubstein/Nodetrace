@@ -14,6 +14,8 @@ const uploadsDir = path.join(dataDir, 'uploads')
 const dbPath = path.join(dataDir, 'photomap.db')
 const distDir = path.join(baseDir, 'dist')
 const projectEventClients = new Map()
+const activeDesktopClients = new Map()
+const CLIENT_TTL_MS = 45000
 
 fs.mkdirSync(uploadsDir, { recursive: true })
 
@@ -417,6 +419,36 @@ function broadcastProjectEvent(projectId, payload = { type: 'project-updated' })
   }
 }
 
+function getProjectClientMap(projectId) {
+  let clients = activeDesktopClients.get(projectId)
+  if (!clients) {
+    clients = new Map()
+    activeDesktopClients.set(projectId, clients)
+  }
+  return clients
+}
+
+function cleanupProjectClients(projectId) {
+  const clients = activeDesktopClients.get(projectId)
+  if (!clients) {
+    return []
+  }
+
+  const cutoff = Date.now() - CLIENT_TTL_MS
+  for (const [clientId, client] of clients) {
+    if (client.updatedAt < cutoff) {
+      clients.delete(clientId)
+    }
+  }
+
+  if (clients.size === 0) {
+    activeDesktopClients.delete(projectId)
+    return []
+  }
+
+  return Array.from(clients.values())
+}
+
 app.use(express.json({ limit: '5mb' }))
 app.use('/uploads', express.static(uploadsDir))
 
@@ -453,6 +485,52 @@ app.get('/api/projects/:id/tree', (req, res, next) => {
     const project = assertProject(projectId)
     const tree = buildTree(project, getProjectNodes.all(projectId))
     res.json(tree)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/projects/:id/clients', (req, res, next) => {
+  try {
+    const projectId = Number(req.params.id)
+    assertProject(projectId)
+
+    const clients = cleanupProjectClients(projectId).sort((a, b) => a.name.localeCompare(b.name))
+    res.json(
+      clients.map((client) => ({
+        id: client.id,
+        name: client.name,
+        selectedNodeId: client.selectedNodeId,
+        selectedNodeName: client.selectedNodeName,
+      })),
+    )
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/projects/:id/clients/:clientId', (req, res, next) => {
+  try {
+    const projectId = Number(req.params.id)
+    assertProject(projectId)
+
+    const clientId = String(req.params.clientId || '').trim()
+    const name = String(req.body.name || '').trim()
+    const selectedNodeId = Number(req.body.selectedNodeId)
+    const selectedNode = assertNode(selectedNodeId)
+    ensureNodeBelongsToProject(selectedNode, projectId)
+
+    const clients = getProjectClientMap(projectId)
+    clients.set(clientId, {
+      id: clientId,
+      name: name || `Desktop ${clientId.slice(-4)}`,
+      selectedNodeId,
+      selectedNodeName: selectedNode.name,
+      updatedAt: Date.now(),
+    })
+
+    cleanupProjectClients(projectId)
+    res.json({ ok: true })
   } catch (error) {
     next(error)
   }
@@ -518,6 +596,7 @@ app.delete('/api/projects/:id', (req, res, next) => {
   try {
     const projectId = Number(req.params.id)
     broadcastProjectEvent(projectId, { type: 'project-deleted' })
+    activeDesktopClients.delete(projectId)
     deleteProjectRecursive(projectId)
     res.status(204).send()
   } catch (error) {
@@ -530,7 +609,17 @@ app.post('/api/projects/:id/folders', (req, res, next) => {
     const projectId = Number(req.params.id)
     assertProject(projectId)
 
-    const parentId = Number(req.body.parentId)
+    const clientId = String(req.body.clientId || '').trim()
+    let parentId = Number(req.body.parentId)
+    if ((!parentId || Number.isNaN(parentId)) && clientId) {
+      const clients = cleanupProjectClients(projectId)
+      const controllingClient = clients.find((client) => client.id === clientId)
+      if (!controllingClient) {
+        return res.status(400).json({ error: 'Selected client is not active' })
+      }
+      parentId = controllingClient.selectedNodeId
+    }
+
     const parentNode = assertNode(parentId)
     ensureNodeBelongsToProject(parentNode, projectId)
 
@@ -563,7 +652,17 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
     const projectId = Number(req.params.id)
     assertProject(projectId)
 
-    const parentId = Number(req.body.parentId)
+    const clientId = String(req.body.clientId || '').trim()
+    let parentId = Number(req.body.parentId)
+    if ((!parentId || Number.isNaN(parentId)) && clientId) {
+      const clients = cleanupProjectClients(projectId)
+      const controllingClient = clients.find((client) => client.id === clientId)
+      if (!controllingClient) {
+        return res.status(400).json({ error: 'Selected client is not active' })
+      }
+      parentId = controllingClient.selectedNodeId
+    }
+
     const parentNode = assertNode(parentId)
     ensureNodeBelongsToProject(parentNode, projectId)
 

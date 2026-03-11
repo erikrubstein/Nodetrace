@@ -105,6 +105,20 @@ select {
   gap: 6px;
 }
 
+.topbar__left .icon-button-wrap:first-of-type .icon-tooltip,
+.topbar__right .icon-button-wrap:last-of-type .icon-tooltip {
+  left: auto;
+  transform: translateY(-2px);
+}
+
+.topbar__left .icon-button-wrap:first-of-type .icon-tooltip {
+  left: 0;
+}
+
+.topbar__right .icon-button-wrap:last-of-type .icon-tooltip {
+  right: 0;
+}
+
 .main-layout {
   min-height: 0;
   height: 100%;
@@ -148,6 +162,11 @@ select {
 }
 
 .canvas-tool-button {
+  background: transparent;
+  color: var(--muted);
+}
+
+.canvas-tool-button:not(:disabled) {
   background: transparent;
   color: var(--muted);
 }
