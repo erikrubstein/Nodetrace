@@ -3,7 +3,7 @@ import path from 'node:path'
 import express from 'express'
 import multer from 'multer'
 import Database from 'better-sqlite3'
-import { execFileSync } from 'node:child_process'
+import AdmZip from 'adm-zip'
 import { renderMobileCapturePage } from './mobileCapturePage.js'
 
 const app = express()
@@ -424,19 +424,34 @@ function makeTempDir(prefix) {
 }
 
 function zipDirectory(sourceDir, destinationZip) {
-  execFileSync('powershell', [
-    '-NoProfile',
-    '-Command',
-    `Compress-Archive -Path '${sourceDir.replace(/'/g, "''")}\\*' -DestinationPath '${destinationZip.replace(/'/g, "''")}' -Force`,
-  ])
+  try {
+    const zip = new AdmZip()
+    for (const entry of fs.readdirSync(sourceDir)) {
+      const absolutePath = path.join(sourceDir, entry)
+      const stats = fs.statSync(absolutePath)
+      if (stats.isDirectory()) {
+        zip.addLocalFolder(absolutePath, entry)
+      } else {
+        zip.addLocalFile(absolutePath)
+      }
+    }
+    zip.writeZip(destinationZip)
+  } catch (error) {
+    const wrapped = new Error(error.message || 'Project export failed')
+    wrapped.status = 500
+    throw wrapped
+  }
 }
 
 function unzipArchive(sourceZip, destinationDir) {
-  execFileSync('powershell', [
-    '-NoProfile',
-    '-Command',
-    `Expand-Archive -LiteralPath '${sourceZip.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`,
-  ])
+  try {
+    const zip = new AdmZip(sourceZip)
+    zip.extractAllTo(destinationDir, true)
+  } catch (error) {
+    const wrapped = new Error(error.message || 'Project import failed')
+    wrapped.status = 500
+    throw wrapped
+  }
 }
 
 function exportProjectArchive(projectId) {
@@ -491,100 +506,142 @@ function exportProjectArchive(projectId) {
   return archivePath
 }
 
-function importProjectArchive(archivePath) {
+function importProjectArchive(archivePath, projectNameOverride = '') {
   const extractDir = makeTempDir('import')
-  unzipArchive(archivePath, extractDir)
+  let projectId = null
 
-  const manifestPath = path.join(extractDir, 'manifest.json')
-  if (!fs.existsSync(manifestPath)) {
-    const error = new Error('Invalid project archive: manifest.json not found')
-    error.status = 400
-    throw error
-  }
+  try {
+    unzipArchive(archivePath, extractDir)
 
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-  const projectId = createProjectWithRoot({
-    name: String(manifest.project?.name || 'Imported Project').trim() || 'Imported Project',
-    description: String(manifest.project?.description || '').trim(),
-  })
+    const manifestPath = path.join(extractDir, 'manifest.json')
+    if (!fs.existsSync(manifestPath)) {
+      const error = new Error('Invalid project archive: manifest.json not found')
+      error.status = 400
+      throw error
+    }
 
-  if (manifest.project?.settings) {
-    updateProjectSettings({
-      id: projectId,
-      settings: normalizeProjectSettings(manifest.project.settings),
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    projectId = createProjectWithRoot({
+      name:
+        String(projectNameOverride || manifest.project?.name || 'Imported Project').trim() ||
+        'Imported Project',
+      description: String(manifest.project?.description || '').trim(),
     })
-  }
 
-  const importedRows = Array.isArray(manifest.nodes) ? manifest.nodes : []
-  const oldToNew = new Map()
-  const createdRoot = getProjectNodes.all(projectId).find((node) => node.parent_id == null)
-  const rootRow = importedRows.find((node) => node.parent_old_id == null)
+    if (manifest.project?.settings) {
+      updateProjectSettings({
+        id: projectId,
+        settings: normalizeProjectSettings(manifest.project.settings),
+      })
+    }
 
-  if (createdRoot && rootRow) {
+    const importedRows = Array.isArray(manifest.nodes) ? manifest.nodes : []
+    const oldToNew = new Map()
+    const createdRoot = getProjectNodes.all(projectId).find((node) => node.parent_id == null)
+    const rootRow = importedRows.find((node) => node.parent_old_id == null)
+
+    if (!createdRoot || !rootRow) {
+      const error = new Error('Invalid project archive: root node missing')
+      error.status = 400
+      throw error
+    }
+
     updateNode({
       id: createdRoot.id,
       project_id: projectId,
       name: rootRow.name || createdRoot.name,
       notes: rootRow.notes || '',
-      tags: rootRow.tags || [],
+      tags: Array.isArray(rootRow.tags) ? rootRow.tags : [],
       collapsed: rootRow.collapsed ? 1 : 0,
     })
     oldToNew.set(rootRow.old_id, createdRoot.id)
+
+    const projectUploadDir = path.join(uploadsDir, String(projectId))
+    fs.mkdirSync(projectUploadDir, { recursive: true })
+
+    const pendingRows = importedRows.filter((row) => row.parent_old_id != null)
+    while (pendingRows.length > 0) {
+      let importedCount = 0
+
+      for (let index = pendingRows.length - 1; index >= 0; index -= 1) {
+        const row = pendingRows[index]
+        const parentId = oldToNew.get(row.parent_old_id)
+        if (!parentId) {
+          continue
+        }
+
+        const importedImagePath = row.image_file ? path.join(extractDir, row.image_file) : null
+        const importedPreviewPath = row.preview_file ? path.join(extractDir, row.preview_file) : null
+        const uniqueToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const relativeImagePath = importedImagePath
+          ? path.join(String(projectId), `${uniqueToken}-${path.basename(importedImagePath)}`)
+          : null
+        const relativePreviewPath = importedPreviewPath
+          ? path.join(String(projectId), `${uniqueToken}-${path.basename(importedPreviewPath)}`)
+          : null
+
+        if (importedImagePath && fs.existsSync(importedImagePath)) {
+          fs.copyFileSync(importedImagePath, path.join(uploadsDir, relativeImagePath))
+        }
+        if (importedPreviewPath && fs.existsSync(importedPreviewPath)) {
+          fs.copyFileSync(importedPreviewPath, path.join(uploadsDir, relativePreviewPath))
+        }
+
+        const nodeId = createNode({
+          project_id: projectId,
+          parent_id: parentId,
+          type: row.type === 'photo' ? 'photo' : 'folder',
+          name: row.name || (row.type === 'photo' ? createUntitledName(projectId) : 'Imported Folder'),
+          notes: row.notes || '',
+          tags: Array.isArray(row.tags) ? row.tags : [],
+          image_path: relativeImagePath,
+          preview_path: relativePreviewPath,
+          original_filename: row.original_filename || null,
+        })
+
+        if (row.collapsed) {
+          updateNode({
+            id: nodeId,
+            project_id: projectId,
+            name: row.name || '',
+            notes: row.notes || '',
+            tags: Array.isArray(row.tags) ? row.tags : [],
+            collapsed: 1,
+          })
+        }
+
+        oldToNew.set(row.old_id, nodeId)
+        pendingRows.splice(index, 1)
+        importedCount += 1
+      }
+
+      if (importedCount === 0) {
+        const unresolvedParents = pendingRows.slice(0, 5).map((row) => ({
+          node: row.name || row.old_id,
+          missingParentOldId: row.parent_old_id,
+        }))
+        const error = new Error(
+          `Invalid project archive: unable to resolve parent links for ${pendingRows.length} node(s)`,
+        )
+        error.status = 400
+        error.details = unresolvedParents
+        throw error
+      }
+    }
+
+    return buildTree(assertProject(projectId), getProjectNodes.all(projectId))
+  } catch (error) {
+    if (projectId != null) {
+      try {
+        deleteProjectRecursive(projectId)
+      } catch {
+        // Ignore cleanup failures and surface the original import error.
+      }
+    }
+    throw error
+  } finally {
+    fs.rmSync(extractDir, { recursive: true, force: true })
   }
-
-  const projectUploadDir = path.join(uploadsDir, String(projectId))
-  fs.mkdirSync(projectUploadDir, { recursive: true })
-
-  for (const row of importedRows) {
-    if (row.parent_old_id == null) {
-      continue
-    }
-
-    const parentId = oldToNew.get(row.parent_old_id)
-    const importedImagePath = row.image_file ? path.join(extractDir, row.image_file) : null
-    const importedPreviewPath = row.preview_file ? path.join(extractDir, row.preview_file) : null
-    const relativeImagePath = importedImagePath
-      ? path.join(String(projectId), `${Date.now()}-${path.basename(importedImagePath)}`)
-      : null
-    const relativePreviewPath = importedPreviewPath
-      ? path.join(String(projectId), `${Date.now()}-${path.basename(importedPreviewPath)}`)
-      : null
-
-    if (importedImagePath && fs.existsSync(importedImagePath)) {
-      fs.copyFileSync(importedImagePath, path.join(uploadsDir, relativeImagePath))
-    }
-    if (importedPreviewPath && fs.existsSync(importedPreviewPath)) {
-      fs.copyFileSync(importedPreviewPath, path.join(uploadsDir, relativePreviewPath))
-    }
-
-    const nodeId = createNode({
-      project_id: projectId,
-      parent_id: parentId,
-      type: row.type === 'photo' ? 'photo' : 'folder',
-      name: row.name || (row.type === 'photo' ? createUntitledName(projectId) : 'Imported Folder'),
-      notes: row.notes || '',
-      tags: Array.isArray(row.tags) ? row.tags : [],
-      image_path: relativeImagePath,
-      preview_path: relativePreviewPath,
-      original_filename: row.original_filename || null,
-    })
-
-    if (row.collapsed) {
-      updateNode({
-        id: nodeId,
-        project_id: projectId,
-        name: row.name || '',
-        notes: row.notes || '',
-        tags: Array.isArray(row.tags) ? row.tags : [],
-        collapsed: 1,
-      })
-    }
-
-    oldToNew.set(row.old_id, nodeId)
-  }
-
-  fs.rmSync(extractDir, { recursive: true, force: true })
-  return buildTree(assertProject(projectId), getProjectNodes.all(projectId))
 }
 
 function broadcastProjectEvent(projectId, payload = { type: 'project-updated' }) {
@@ -814,12 +871,20 @@ app.post('/api/projects/import', importUpload.single('archive'), (req, res, next
       return res.status(400).json({ error: 'Project archive is required' })
     }
 
-    const importedTree = importProjectArchive(req.file.path)
-    fs.unlinkSync(req.file.path)
+    const archivePath = `${req.file.path}${path.extname(req.file.originalname || '') || '.zip'}`
+    fs.renameSync(req.file.path, archivePath)
+    const importedTree = importProjectArchive(archivePath, String(req.body.projectName || '').trim())
+    fs.unlinkSync(archivePath)
     res.status(201).json(importedTree)
   } catch (error) {
     if (req.file?.path && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path)
+    }
+    const archivePath = req.file?.path
+      ? `${req.file.path}${path.extname(req.file.originalname || '') || '.zip'}`
+      : null
+    if (archivePath && fs.existsSync(archivePath)) {
+      fs.unlinkSync(archivePath)
     }
     next(error)
   }
@@ -1008,7 +1073,8 @@ if (fs.existsSync(distDir)) {
 }
 
 app.use((error, req, res, _next) => {
-  const status = error.status || 500
+  const requestedStatus = Number(error.status)
+  const status = requestedStatus >= 100 && requestedStatus < 1000 ? requestedStatus : 500
   if (status >= 500) {
     console.error(error)
   }

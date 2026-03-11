@@ -12,6 +12,7 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "better-sqlite3": "^12.6.2",
     "express": "^5.2.1",
     "multer": "^2.1.1",

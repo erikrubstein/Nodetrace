@@ -707,6 +707,11 @@ button:disabled {
   background: var(--panel);
 }
 
+.transfer-progress {
+  width: 100%;
+  height: 10px;
+}
+
 .dialog__title {
   font-size: 0.88rem;
   font-weight: 600;

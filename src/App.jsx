@@ -25,6 +25,38 @@ async function api(url, options = {}) {
   return response.json()
 }
 
+function uploadWithProgress(url, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('POST', url)
+    request.responseType = 'json'
+
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable) {
+        onProgress?.(null)
+        return
+      }
+
+      onProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+    }
+
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        resolve(request.response)
+        return
+      }
+
+      reject(new Error(request.response?.error || 'Request failed'))
+    }
+
+    request.onerror = () => {
+      reject(new Error('Network request failed'))
+    }
+
+    request.send(formData)
+  })
+}
+
 function IconButton({ children, tooltip, ...props }) {
   const {
     className,
@@ -390,6 +422,10 @@ function App() {
   const [fileMenuOpen, setFileMenuOpen] = useState(false)
   const [showProjectDialog, setShowProjectDialog] = useState(null)
   const [projectName, setProjectName] = useState('')
+  const [exportFileName, setExportFileName] = useState('')
+  const [importProjectName, setImportProjectName] = useState('')
+  const [importArchiveFile, setImportArchiveFile] = useState(null)
+  const [transferProgress, setTransferProgress] = useState(null)
   const [deleteProjectText, setDeleteProjectText] = useState('')
   const [deleteNodeOpen, setDeleteNodeOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState(null)
@@ -901,41 +937,89 @@ function App() {
     await persistProjectSettings(defaultProjectSettings)
   }
 
-  function exportProject() {
+  async function exportProject() {
     if (!selectedProjectId) {
-      return
-    }
-
-    window.location.href = `/api/projects/${selectedProjectId}/export`
-    setFileMenuOpen(false)
-  }
-
-  async function importProject(file) {
-    if (!file) {
       return
     }
 
     setBusy(true)
     setError('')
+    setTransferProgress(0)
+
+    try {
+      const response = await fetch(`/api/projects/${selectedProjectId}/export`)
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload.error || 'Export failed')
+      }
+
+      const total = Number(response.headers.get('content-length')) || 0
+      const reader = response.body?.getReader()
+      const chunks = []
+      let loaded = 0
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) {
+            break
+          }
+          chunks.push(value)
+          loaded += value.length
+          setTransferProgress(total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null)
+        }
+      }
+
+      const blob = new Blob(chunks, { type: 'application/zip' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = (exportFileName.trim() || tree?.project?.name || 'project') + '.zip'
+      document.body.append(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      setTransferProgress(100)
+      setShowProjectDialog(null)
+      setFileMenuOpen(false)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+      window.setTimeout(() => setTransferProgress(null), 400)
+    }
+  }
+
+  async function importProject() {
+    if (!importArchiveFile) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    setTransferProgress(0)
 
     try {
       const formData = new FormData()
-      formData.append('archive', file)
+      formData.append('archive', importArchiveFile)
+      formData.append('projectName', importProjectName.trim())
 
-      const importedTree = await api('/api/projects/import', {
-        method: 'POST',
-        body: formData,
-      })
+      const importedTree = await uploadWithProgress('/api/projects/import', formData, setTransferProgress)
 
       setTree(importedTree)
       setSelectedProjectId(importedTree.project.id)
       setSelectedNodeId(importedTree.root?.id ?? null)
+      setImportArchiveFile(null)
+      setImportProjectName('')
       setFileMenuOpen(false)
+      setShowProjectDialog(null)
+      setTransferProgress(100)
       await loadProjects(importedTree.project.id)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
       setBusy(false)
+      window.setTimeout(() => setTransferProgress(null), 400)
       if (importInputRef.current) {
         importInputRef.current.value = ''
       }
@@ -1259,7 +1343,11 @@ function App() {
                 <button
                   className="menu-item"
                   disabled={!selectedProjectId || busy}
-                  onClick={exportProject}
+                  onClick={() => {
+                    setExportFileName(tree?.project?.name || 'project')
+                    setShowProjectDialog('export')
+                    setFileMenuOpen(false)
+                  }}
                   type="button"
                 >
                   Export Project
@@ -1268,8 +1356,10 @@ function App() {
                   className="menu-item"
                   disabled={busy}
                   onClick={() => {
+                    setImportProjectName('')
+                    setImportArchiveFile(null)
+                    setShowProjectDialog('import')
                     setFileMenuOpen(false)
-                    importInputRef.current?.click()
                   }}
                   type="button"
                 >
@@ -1305,7 +1395,13 @@ function App() {
             ref={importInputRef}
             accept=".zip"
             hidden
-            onChange={(event) => importProject(event.target.files?.[0] || null)}
+            onChange={(event) => {
+              const file = event.target.files?.[0] || null
+              setImportArchiveFile(file)
+              if (file && !importProjectName) {
+                setImportProjectName(file.name.replace(/\.zip$/i, ''))
+              }
+            }}
             type="file"
           />
         </div>
@@ -1855,6 +1951,67 @@ function App() {
                   <small>{project.node_count} nodes</small>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showProjectDialog === 'export' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setShowProjectDialog(null)} role="presentation">
+          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+            <div className="dialog__title">Export Project</div>
+            <input
+              autoFocus
+              placeholder="Archive filename"
+              value={exportFileName}
+              onChange={(event) => setExportFileName(event.target.value.replace(/\.zip$/i, ''))}
+            />
+            <div className="inspector__notice">
+              File will be saved as {`${exportFileName || tree?.project?.name || 'project'}.zip`}
+            </div>
+            <progress className="transfer-progress" max="100" value={transferProgress ?? undefined} />
+            <div className="dialog__actions">
+              <button className="ghost-button" disabled={busy} onClick={() => setShowProjectDialog(null)} type="button">
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={busy || !selectedProjectId}
+                onClick={exportProject}
+                type="button"
+              >
+                Export
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showProjectDialog === 'import' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setShowProjectDialog(null)} role="presentation">
+          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+            <div className="dialog__title">Import Project</div>
+            <input
+              placeholder="New project name"
+              value={importProjectName}
+              onChange={(event) => setImportProjectName(event.target.value)}
+            />
+            <button className="ghost-button" disabled={busy} onClick={() => importInputRef.current?.click()} type="button">
+              {importArchiveFile ? importArchiveFile.name : 'Choose Archive'}
+            </button>
+            <progress className="transfer-progress" max="100" value={transferProgress ?? undefined} />
+            <div className="dialog__actions">
+              <button className="ghost-button" disabled={busy} onClick={() => setShowProjectDialog(null)} type="button">
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={busy || !importArchiveFile}
+                onClick={importProject}
+                type="button"
+              >
+                Import
+              </button>
             </div>
           </div>
         </div>
