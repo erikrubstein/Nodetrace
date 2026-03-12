@@ -162,6 +162,10 @@ function FitViewIcon() {
   return <i aria-hidden="true" className="fa-solid fa-expand" />
 }
 
+function CameraIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-camera" />
+}
+
 function PreviewIcon() {
   return <i aria-hidden="true" className="fa-solid fa-eye" />
 }
@@ -210,6 +214,22 @@ async function createPreviewFile(file) {
     return new File([blob], `${baseName}-preview.jpg`, { type: 'image/jpeg' })
   } finally {
     URL.revokeObjectURL(imageUrl)
+  }
+}
+
+function getContainedRect(containerWidth, containerHeight, sourceWidth, sourceHeight) {
+  if (!containerWidth || !containerHeight || !sourceWidth || !sourceHeight) {
+    return { x: 0, y: 0, width: containerWidth, height: containerHeight }
+  }
+
+  const scale = Math.min(containerWidth / sourceWidth, containerHeight / sourceHeight)
+  const width = sourceWidth * scale
+  const height = sourceHeight * scale
+  return {
+    x: (containerWidth - width) / 2,
+    y: (containerHeight - height) / 2,
+    width,
+    height,
   }
 }
 
@@ -548,20 +568,34 @@ function App() {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [cameraOpen, setCameraOpen] = useState(false)
   const [previewWidth, setPreviewWidth] = useState(340)
   const [inspectorWidth, setInspectorWidth] = useState(320)
   const [settingsWidth, setSettingsWidth] = useState(280)
+  const [cameraWidth, setCameraWidth] = useState(360)
   const [pendingUploadParentId, setPendingUploadParentId] = useState(null)
   const [pendingUploadMode, setPendingUploadMode] = useState('child')
+  const [cameraDevices, setCameraDevices] = useState([])
+  const [selectedCameraId, setSelectedCameraId] = useState('')
+  const [cameraNotice, setCameraNotice] = useState('')
+  const [cameraSelection, setCameraSelection] = useState(null)
+  const [historyState] = useState({ undo: 0, redo: 0 })
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
   const nameInputRef = useRef(null)
   const viewportRef = useRef(null)
   const previewViewportRef = useRef(null)
+  const cameraViewportRef = useRef(null)
+  const cameraVideoRef = useRef(null)
   const panRef = useRef(null)
   const previewPanRef = useRef(null)
   const resizeRef = useRef(null)
   const nodeDragRef = useRef(null)
+  const cameraStreamRef = useRef(null)
+  const cameraSelectRef = useRef(null)
+  const cameraSelectionRef = useRef(null)
+  const undoStackRef = useRef([])
+  const redoStackRef = useRef([])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -608,6 +642,18 @@ function App() {
     await loadTree(projectId, preferredNodeId)
   }
 
+  async function runWithHistory(_projectId, action, _preferredNodeId = selectedNodeId) {
+    await action()
+  }
+
+  async function undo() {
+    setError('Undo is temporarily disabled while this is being reworked.')
+  }
+
+  async function redo() {
+    setError('Redo is temporarily disabled while this is being reworked.')
+  }
+
   const selectedNode = tree?.nodes.find((node) => node.id === selectedNodeId) || null
   const editTargetNode = tree?.nodes.find((node) => node.id === editTargetId) || null
   const projectSettings = tree?.project?.settings || defaultProjectSettings
@@ -632,6 +678,11 @@ function App() {
 
   useEffect(() => {
     updateProjectIdInUrl(selectedProjectId)
+  }, [selectedProjectId])
+
+  useEffect(() => {
+    undoStackRef.current = []
+    redoStackRef.current = []
   }, [selectedProjectId])
 
   useEffect(() => {
@@ -745,17 +796,19 @@ function App() {
       }
 
       try {
-        const updatedNode = await api(`/api/nodes/${node.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: normalizedName,
-            notes: draft.notes,
-            tags: draft.tags,
-          }),
-        })
+        await runWithHistory(node.project_id, async () => {
+          const updatedNode = await api(`/api/nodes/${node.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: normalizedName,
+              notes: draft.notes,
+              tags: draft.tags,
+            }),
+          })
 
-        applyNodeUpdate(updatedNode)
+          applyNodeUpdate(updatedNode)
+        }, node.id)
       } catch (submitError) {
         setError(submitError.message)
       }
@@ -769,13 +822,15 @@ function App() {
       setError('')
 
       try {
-        await api(`/api/nodes/${nodeId}/move`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(asVariant ? { variantOfId: parentId } : { parentId, variantOfId: null }),
-        })
+        await runWithHistory(selectedProjectId, async () => {
+          await api(`/api/nodes/${nodeId}/move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(asVariant ? { variantOfId: parentId } : { parentId, variantOfId: null }),
+          })
 
-        await refresh(selectedProjectId, nodeId)
+          await refresh(selectedProjectId, nodeId)
+        }, nodeId)
       } catch (submitError) {
         setError(submitError.message)
       } finally {
@@ -784,6 +839,30 @@ function App() {
     }
 
     function handlePointerMove(event) {
+      const cameraSelectState = cameraSelectRef.current
+      if (cameraSelectState && cameraSelectState.pointerId === event.pointerId) {
+        const { containerRect, videoRect, startX, startY } = cameraSelectState
+        const currentX = Math.min(
+          Math.max(event.clientX - containerRect.left, videoRect.x),
+          videoRect.x + videoRect.width,
+        )
+        const currentY = Math.min(
+          Math.max(event.clientY - containerRect.top, videoRect.y),
+          videoRect.y + videoRect.height,
+        )
+        const left = Math.min(startX, currentX)
+        const top = Math.min(startY, currentY)
+        const nextSelection = {
+          x: left,
+          y: top,
+          width: Math.abs(currentX - startX),
+          height: Math.abs(currentY - startY),
+        }
+        cameraSelectionRef.current = nextSelection
+        setCameraSelection(nextSelection)
+        return
+      }
+
       if (nodeDragRef.current) {
         const dragState = nodeDragRef.current
         const dx = event.clientX - dragState.startX
@@ -845,6 +924,12 @@ function App() {
         return
       }
 
+      if (resizeRef.current.target === 'camera') {
+        const nextWidth = Math.max(MIN_INSPECTOR_WIDTH, event.clientX)
+        setCameraWidth(nextWidth)
+        return
+      }
+
       const nextWidth = Math.max(MIN_INSPECTOR_WIDTH, window.innerWidth - event.clientX)
       if (resizeRef.current.target === 'settings') {
         setSettingsWidth(nextWidth)
@@ -870,6 +955,9 @@ function App() {
       }
 
       previewPanRef.current = null
+      if (cameraSelectRef.current && cameraSelectRef.current.pointerId === event.pointerId) {
+        void finishCameraSelection(event)
+      }
       resizeRef.current = null
       document.body.classList.remove('is-resizing')
     }
@@ -907,6 +995,75 @@ function App() {
   }, [selectedNodeId, selectedProjectId])
 
   useEffect(() => {
+    let cancelled = false
+
+    async function startCamera() {
+      if (!cameraOpen) {
+        setCameraSelection(null)
+        setCameraNotice('')
+        return
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraNotice('Camera access is not available in this browser. Use HTTPS or localhost.')
+        return
+      }
+
+      try {
+        if (cameraStreamRef.current) {
+          cameraStreamRef.current.getTracks().forEach((track) => track.stop())
+          cameraStreamRef.current = null
+        }
+
+        setCameraNotice('Requesting camera permission...')
+        const stream = await navigator.mediaDevices.getUserMedia(
+          selectedCameraId
+            ? { video: { deviceId: { exact: selectedCameraId } }, audio: false }
+            : { video: true, audio: false },
+        )
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+
+        cameraStreamRef.current = stream
+        if (cameraVideoRef.current) {
+          cameraVideoRef.current.srcObject = stream
+          await cameraVideoRef.current.play().catch(() => {})
+        }
+
+        const refreshedDevices = await navigator.mediaDevices.enumerateDevices()
+        if (!cancelled) {
+          const videoInputs = refreshedDevices.filter((device) => device.kind === 'videoinput')
+          setCameraDevices(videoInputs)
+          if (!selectedCameraId) {
+            const activeTrack = stream.getVideoTracks()[0]
+            const activeDeviceId = activeTrack?.getSettings?.().deviceId || videoInputs[0]?.deviceId || ''
+            if (activeDeviceId) {
+              setSelectedCameraId(activeDeviceId)
+            }
+          }
+          setCameraNotice('Drag over the camera view to capture a crop.')
+        }
+      } catch (cameraError) {
+        if (!cancelled) {
+          setCameraNotice(cameraError.message || 'Unable to access the selected camera.')
+        }
+      }
+    }
+
+    startCamera()
+
+    return () => {
+      cancelled = true
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop())
+        cameraStreamRef.current = null
+      }
+    }
+  }, [cameraOpen, selectedCameraId])
+
+  useEffect(() => {
     function handleKeyDown(event) {
       const target = event.target
       const isTypingTarget =
@@ -919,6 +1076,16 @@ function App() {
         event.preventDefault()
         nameInputRef.current?.focus()
         nameInputRef.current?.select()
+        return
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !isTypingTarget) {
+        event.preventDefault()
+        if (event.shiftKey) {
+          void redo()
+        } else {
+          void undo()
+        }
         return
       }
 
@@ -1025,26 +1192,28 @@ function App() {
       return
     }
 
-    setTree((current) =>
-      current ? { ...current, project: { ...current.project, settings: nextSettings } } : current,
-    )
-    setProjects((current) =>
-      current.map((project) =>
-        project.id === selectedProjectId ? { ...project, settings: nextSettings } : project,
-      ),
-    )
-
     try {
-      const updatedProject = await api(`/api/projects/${selectedProjectId}/settings`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(nextSettings),
-      })
+      await runWithHistory(selectedProjectId, async () => {
+        setTree((current) =>
+          current ? { ...current, project: { ...current.project, settings: nextSettings } } : current,
+        )
+        setProjects((current) =>
+          current.map((project) =>
+            project.id === selectedProjectId ? { ...project, settings: nextSettings } : project,
+          ),
+        )
 
-      setTree((current) => (current ? { ...current, project: updatedProject } : current))
-      setProjects((current) =>
-        current.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
-      )
+        const updatedProject = await api(`/api/projects/${selectedProjectId}/settings`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nextSettings),
+        })
+
+        setTree((current) => (current ? { ...current, project: updatedProject } : current))
+        setProjects((current) =>
+          current.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+        )
+      }, selectedNodeId)
     } catch (submitError) {
       setError(submitError.message)
     }
@@ -1152,18 +1321,20 @@ function App() {
     setError('')
 
     try {
-      await api(`/api/projects/${selectedProjectId}/folders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentId,
-          name: 'New Folder',
-          notes: '',
-          tags: '',
-        }),
-      })
+      await runWithHistory(selectedProjectId, async () => {
+        await api(`/api/projects/${selectedProjectId}/folders`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            parentId,
+            name: 'New Folder',
+            notes: '',
+            tags: '',
+          }),
+        })
 
-      await refresh(selectedProjectId, parentId)
+        await refresh(selectedProjectId, parentId)
+      }, parentId)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -1180,30 +1351,32 @@ function App() {
     setError('')
 
     try {
-      for (const file of files) {
-        const previewFile = await createPreviewFile(file)
-        const formData = new FormData()
-        if (mode === 'variant') {
-          formData.append('variantOfId', targetNodeId)
-          formData.append('variant', 'true')
-        } else {
-          formData.append('parentId', targetNodeId)
-        }
-        formData.append('name', '<untitled>')
-        formData.append('notes', '')
-        formData.append('tags', '')
-        formData.append('file', file)
-        if (previewFile) {
-          formData.append('preview', previewFile)
+      await runWithHistory(selectedProjectId, async () => {
+        for (const file of files) {
+          const previewFile = await createPreviewFile(file)
+          const formData = new FormData()
+          if (mode === 'variant') {
+            formData.append('variantOfId', targetNodeId)
+            formData.append('variant', 'true')
+          } else {
+            formData.append('parentId', targetNodeId)
+          }
+          formData.append('name', '<untitled>')
+          formData.append('notes', '')
+          formData.append('tags', '')
+          formData.append('file', file)
+          if (previewFile) {
+            formData.append('preview', previewFile)
+          }
+
+          await api(`/api/projects/${selectedProjectId}/photos`, {
+            method: 'POST',
+            body: formData,
+          })
         }
 
-        await api(`/api/projects/${selectedProjectId}/photos`, {
-          method: 'POST',
-          body: formData,
-        })
-      }
-
-      await refresh(selectedProjectId, selectedNodeId)
+        await refresh(selectedProjectId, selectedNodeId)
+      }, targetNodeId)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -1221,13 +1394,15 @@ function App() {
     setError('')
 
     try {
-      await api(`/api/nodes/${nodeId}/collapse`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ collapsed }),
-      })
+      await runWithHistory(selectedProjectId, async () => {
+        await api(`/api/nodes/${nodeId}/collapse`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ collapsed }),
+        })
 
-      await refresh(selectedProjectId, nodeId)
+        await refresh(selectedProjectId, nodeId)
+      }, nodeId)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -1244,13 +1419,15 @@ function App() {
     setError('')
 
     try {
-      await api(`/api/nodes/${node.id}/move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ variantOfId: Number(anchorId) }),
-      })
+      await runWithHistory(selectedProjectId, async () => {
+        await api(`/api/nodes/${node.id}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ variantOfId: Number(anchorId) }),
+        })
 
-      await refresh(selectedProjectId, node.id)
+        await refresh(selectedProjectId, node.id)
+      }, node.id)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -1267,13 +1444,15 @@ function App() {
     setError('')
 
     try {
-      await api(`/api/nodes/${node.id}/move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentId: Number(node.variant_of_id), variantOfId: null }),
-      })
+      await runWithHistory(selectedProjectId, async () => {
+        await api(`/api/nodes/${node.id}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parentId: Number(node.variant_of_id), variantOfId: null }),
+        })
 
-      await refresh(selectedProjectId, node.id)
+        await refresh(selectedProjectId, node.id)
+      }, node.id)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -1290,13 +1469,15 @@ function App() {
     setError('')
 
     try {
-      await api(`/api/nodes/${selectedNode.id}/move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentId: Number(parentId), variantOfId: null }),
-      })
+      await runWithHistory(selectedProjectId, async () => {
+        await api(`/api/nodes/${selectedNode.id}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parentId: Number(parentId), variantOfId: null }),
+        })
 
-      await refresh(selectedProjectId, selectedNode.id)
+        await refresh(selectedProjectId, selectedNode.id)
+      }, selectedNode.id)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -1314,9 +1495,11 @@ function App() {
 
     try {
       const fallbackId = selectedNode.parent_id
-      await api(`/api/nodes/${selectedNode.id}`, { method: 'DELETE' })
-      setDeleteNodeOpen(false)
-      await refresh(selectedProjectId, fallbackId)
+      await runWithHistory(selectedProjectId, async () => {
+        await api(`/api/nodes/${selectedNode.id}`, { method: 'DELETE' })
+        setDeleteNodeOpen(false)
+        await refresh(selectedProjectId, fallbackId)
+      }, fallbackId)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -1457,7 +1640,7 @@ function App() {
     return () => {
       element.removeEventListener('wheel', wheelListener)
     }
-  }, [selectedNode?.imageUrl])
+  }, [previewOpen, selectedNode?.imageUrl])
 
   function beginNodeDrag(nodeId, event) {
     if (event.button !== 0) {
@@ -1498,6 +1681,199 @@ function App() {
     })
   }
 
+  function beginCameraSelection(event) {
+    if (event.button !== 0 || !cameraOpen || !cameraViewportRef.current || !cameraVideoRef.current) {
+      return
+    }
+
+    const containerRect = cameraViewportRef.current.getBoundingClientRect()
+    const video = cameraVideoRef.current
+    const videoRect = getContainedRect(
+      containerRect.width,
+      containerRect.height,
+      video.videoWidth || containerRect.width,
+      video.videoHeight || containerRect.height,
+    )
+
+    const startX = Math.min(Math.max(event.clientX - containerRect.left, videoRect.x), videoRect.x + videoRect.width)
+    const startY = Math.min(Math.max(event.clientY - containerRect.top, videoRect.y), videoRect.y + videoRect.height)
+
+    cameraSelectRef.current = {
+      pointerId: event.pointerId,
+      containerRect,
+      videoRect,
+      startX,
+      startY,
+    }
+    const initialSelection = { x: startX, y: startY, width: 0, height: 0 }
+    cameraSelectionRef.current = initialSelection
+    setCameraSelection(initialSelection)
+    cameraViewportRef.current.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  async function finishCameraSelection(event) {
+    const selectState = cameraSelectRef.current
+    if (!selectState || selectState.pointerId !== event.pointerId) {
+      return
+    }
+
+    cameraSelectRef.current = null
+    cameraViewportRef.current?.releasePointerCapture(event.pointerId)
+    const selection = cameraSelectionRef.current
+    cameraSelectionRef.current = null
+    setCameraSelection(null)
+
+    if (!selection || selection.width < 12 || selection.height < 12) {
+      return
+    }
+
+    if (!selectedNode || selectedNode.isVariant) {
+      setCameraNotice('Select a non-variant node before capturing.')
+      return
+    }
+
+    const video = cameraVideoRef.current
+    if (!video?.videoWidth || !video?.videoHeight) {
+      setCameraNotice('Camera frame is not ready yet.')
+      return
+    }
+
+    const videoRect = selectState.videoRect
+    const cropX = Math.round(((selection.x - videoRect.x) / videoRect.width) * video.videoWidth)
+    const cropY = Math.round(((selection.y - videoRect.y) / videoRect.height) * video.videoHeight)
+    const cropWidth = Math.round((selection.width / videoRect.width) * video.videoWidth)
+    const cropHeight = Math.round((selection.height / videoRect.height) * video.videoHeight)
+
+    if (cropWidth < 4 || cropHeight < 4) {
+      return
+    }
+
+    const canvas = document.createElement('canvas')
+    canvas.width = cropWidth
+    canvas.height = cropHeight
+    const context = canvas.getContext('2d')
+    context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9))
+    if (!blob) {
+      setCameraNotice('Unable to capture the selected region.')
+      return
+    }
+
+    const file = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' })
+    setCameraNotice('Uploading selection...')
+    await uploadFiles([file], selectedNode.id, 'child')
+    setCameraNotice('Selection added.')
+  }
+
+  async function captureFullCameraFrame() {
+    const video = cameraVideoRef.current
+    if (!video?.videoWidth || !video?.videoHeight) {
+      setCameraNotice('Camera frame is not ready yet.')
+      return
+    }
+
+    if (!selectedNode || selectedNode.isVariant) {
+      setCameraNotice('Select a non-variant node before capturing.')
+      return
+    }
+
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const context = canvas.getContext('2d')
+    context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight)
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9))
+    if (!blob) {
+      setCameraNotice('Unable to capture the current frame.')
+      return
+    }
+
+    const file = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' })
+    setCameraNotice('Uploading full frame...')
+    await uploadFiles([file], selectedNode.id, 'child')
+    setCameraNotice('Full frame added.')
+  }
+
+  async function downloadSelectedImage() {
+    if (!selectedNode?.imageUrl) {
+      return
+    }
+
+    const response = await fetch(selectedNode.imageUrl)
+    if (!response.ok) {
+      throw new Error('Unable to download the selected image.')
+    }
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    const extension =
+      blob.type === 'image/png'
+        ? '.png'
+        : blob.type === 'image/webp'
+          ? '.webp'
+          : blob.type === 'image/gif'
+            ? '.gif'
+            : '.jpg'
+    link.download = `${selectedNode.name || 'image'}${extension}`
+    document.body.append(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  async function copySelectedImage() {
+    if (!selectedNode?.imageUrl) {
+      return
+    }
+
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      throw new Error('Image copy is not supported in this browser.')
+    }
+
+    const response = await fetch(selectedNode.imageUrl)
+    if (!response.ok) {
+      throw new Error('Unable to copy the selected image.')
+    }
+
+    const blob = await response.blob()
+
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/jpeg']: blob })])
+      return
+    } catch (error) {
+      if (!blob.type.startsWith('image/')) {
+        throw error
+      }
+    }
+
+    const imageUrl = URL.createObjectURL(blob)
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = imageUrl
+      })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d')
+      context.drawImage(image, 0, 0)
+      const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+      if (!pngBlob) {
+        throw new Error('Unable to convert image for clipboard copy.')
+      }
+
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+    } finally {
+      URL.revokeObjectURL(imageUrl)
+    }
+  }
+
   return (
     <div className="app-shell" data-theme={theme}>
       <header className="topbar">
@@ -1531,6 +1907,28 @@ function App() {
                   type="button"
                 >
                   Open Project
+                </button>
+                <button
+                  className="menu-item"
+                  disabled={historyState.undo === 0 || busy}
+                  onClick={() => {
+                    setFileMenuOpen(false)
+                    void undo()
+                  }}
+                  type="button"
+                >
+                  Undo
+                </button>
+                <button
+                  className="menu-item"
+                  disabled={historyState.redo === 0 || busy}
+                  onClick={() => {
+                    setFileMenuOpen(false)
+                    void redo()
+                  }}
+                  type="button"
+                >
+                  Redo
                 </button>
                 <button
                   className="menu-item"
@@ -1611,6 +2009,13 @@ function App() {
             <PreviewIcon />
           </IconButton>
           <IconButton
+            aria-label={cameraOpen ? 'Close camera' : 'Open camera'}
+            onClick={() => setCameraOpen((open) => !open)}
+            tooltip="Camera"
+          >
+            <CameraIcon />
+          </IconButton>
+          <IconButton
             aria-label={inspectorOpen ? 'Close inspector' : 'Open inspector'}
             onClick={() => setInspectorOpen((open) => !open)}
             tooltip="Inspector"
@@ -1639,6 +2044,7 @@ function App() {
         style={{
           gridTemplateColumns: [
             previewOpen ? `${previewWidth}px 3px` : '',
+            cameraOpen ? `${cameraWidth}px 3px` : '',
             'minmax(0, 1fr)',
             inspectorOpen ? `3px ${inspectorWidth}px` : '',
             settingsOpen ? `3px ${settingsWidth}px` : '',
@@ -1651,6 +2057,36 @@ function App() {
           <>
             <aside className="inspector preview-panel">
               <div className="inspector__titlebar">Preview</div>
+              <div className="preview-panel__actions">
+                <button
+                  className="ghost-button"
+                  disabled={!selectedNode?.imageUrl || busy}
+                  onClick={async () => {
+                    try {
+                      await downloadSelectedImage()
+                    } catch (submitError) {
+                      setError(submitError.message)
+                    }
+                  }}
+                  type="button"
+                >
+                  Download Image
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={!selectedNode?.imageUrl || busy}
+                  onClick={async () => {
+                    try {
+                      await copySelectedImage()
+                    } catch (submitError) {
+                      setError(submitError.message)
+                    }
+                  }}
+                  type="button"
+                >
+                  Copy Image
+                </button>
+              </div>
               {selectedNode?.imageUrl ? (
                 <div
                   ref={previewViewportRef}
@@ -1678,6 +2114,78 @@ function App() {
               className="inspector-resize-handle"
               onPointerDown={(event) => {
                 resizeRef.current = { pointerId: event.pointerId, target: 'preview' }
+                document.body.classList.add('is-resizing')
+                event.preventDefault()
+              }}
+              role="separator"
+            />
+          </>
+        ) : null}
+        {cameraOpen ? (
+          <>
+            <aside className="inspector camera-panel">
+              <div className="inspector__titlebar">Camera</div>
+              <div className="inspector__section field-stack">
+                <label>
+                  <span>Input</span>
+                  <select
+                    value={selectedCameraId}
+                    onChange={(event) => setSelectedCameraId(event.target.value)}
+                  >
+                    {cameraDevices.length === 0 ? (
+                      <option value="">No camera inputs</option>
+                    ) : null}
+                    {cameraDevices.map((device, index) => (
+                      <option key={device.deviceId || index} value={device.deviceId}>
+                        {device.label || `Camera ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="camera-panel__hint">
+                  {selectedNode && !selectedNode.isVariant
+                    ? `Capture target: ${selectedNode.name}`
+                    : 'Select a non-variant node to capture into.'}
+                </div>
+                <button
+                  className="primary-button wide"
+                  disabled={!selectedNode || selectedNode.isVariant || busy}
+                  onClick={() => void captureFullCameraFrame()}
+                  type="button"
+                >
+                  Take Photo
+                </button>
+              </div>
+              <div
+                ref={cameraViewportRef}
+                className={`camera-viewport ${selectedNode?.isVariant ? 'disabled' : ''}`}
+                onPointerDown={beginCameraSelection}
+              >
+                <video
+                  ref={cameraVideoRef}
+                  autoPlay
+                  className="camera-video"
+                  muted
+                  playsInline
+                />
+                {cameraSelection ? (
+                  <div
+                    className="camera-selection"
+                    style={{
+                      left: `${cameraSelection.x}px`,
+                      top: `${cameraSelection.y}px`,
+                      width: `${cameraSelection.width}px`,
+                      height: `${cameraSelection.height}px`,
+                    }}
+                  />
+                ) : null}
+              </div>
+              <div className="inspector__notice">{cameraNotice || 'Drag to crop and upload.'}</div>
+            </aside>
+            <div
+              className="inspector-resize-handle"
+              onPointerDown={(event) => {
+                resizeRef.current = { pointerId: event.pointerId, target: 'camera' }
                 document.body.classList.add('is-resizing')
                 event.preventDefault()
               }}

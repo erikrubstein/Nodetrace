@@ -228,7 +228,7 @@ export function renderMobileCapturePage() {
           projectSelect.append(option)
         }
 
-        const requestedProjectId = search.get('projectId')
+        const requestedProjectId = search.get('project') || search.get('projectId')
         if (requestedProjectId && projects.some((project) => String(project.id) === requestedProjectId)) {
           projectSelect.value = requestedProjectId
         }

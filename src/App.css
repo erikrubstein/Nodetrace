@@ -513,6 +513,19 @@ select {
   overflow: hidden;
 }
 
+.preview-panel__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.preview-panel__actions button {
+  flex: 1;
+}
+
+.camera-panel {
+  overflow: hidden;
+}
+
 .preview-viewport {
   position: relative;
   flex: 1;
@@ -524,8 +537,48 @@ select {
   cursor: grab;
 }
 
+.camera-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 280px;
+  overflow: hidden;
+  user-select: none;
+  background: var(--surface);
+  border-radius: 6px;
+  cursor: crosshair;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.camera-viewport.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .preview-viewport:active {
   cursor: grabbing;
+}
+
+.camera-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: top center;
+  display: block;
+  background: var(--surface);
+}
+
+.camera-selection {
+  position: absolute;
+  border: 2px solid var(--selected);
+  background: transparent;
+  pointer-events: none;
+}
+
+.camera-panel__hint {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .preview-stage {
