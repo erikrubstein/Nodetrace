@@ -764,6 +764,8 @@ function App() {
   const replayingHistoryRef = useRef(false)
   const pendingLocalEventsRef = useRef(0)
   const treeRef = useRef(null)
+  const selectedNodeIdRef = useRef(null)
+  const nodeSaveSequenceRef = useRef(new Map())
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -773,6 +775,10 @@ function App() {
   useEffect(() => {
     treeRef.current = tree
   }, [tree])
+
+  useEffect(() => {
+    selectedNodeIdRef.current = selectedNodeId
+  }, [selectedNodeId])
 
   useEffect(() => {
     const activeUrls = new Set(
@@ -1010,7 +1016,7 @@ function App() {
         return
       }
 
-      loadTree(selectedProjectId, selectedNodeId).catch((loadError) => {
+      loadTree(selectedProjectId, selectedNodeIdRef.current).catch((loadError) => {
         setError(loadError.message)
       })
     }
@@ -1022,7 +1028,7 @@ function App() {
     return () => {
       stream.close()
     }
-  }, [selectedNodeId, selectedProjectId])
+  }, [selectedProjectId])
 
   const applyNodeUpdate = useCallback((updatedNode) => {
     setTree((current) => {
@@ -1077,7 +1083,7 @@ function App() {
     }
   }
 
-  async function patchNodeRequest(nodeId, payload) {
+  async function patchNodeRequest(nodeId, payload, options = {}) {
     const rollbackLocalEvent = beginLocalEventExpectation()
     try {
       const updatedNode = await api(`/api/nodes/${nodeId}`, {
@@ -1085,7 +1091,9 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      applyNodeUpdate(updatedNode)
+      if (!options.skipApply) {
+        applyNodeUpdate(updatedNode)
+      }
       return updatedNode
     } catch (error) {
       rollbackLocalEvent()
@@ -1380,7 +1388,12 @@ function App() {
           tags: draft.tags,
         }
 
-        await patchNodeRequest(node.id, after)
+        const saveSequence = (nodeSaveSequenceRef.current.get(node.id) || 0) + 1
+        nodeSaveSequenceRef.current.set(node.id, saveSequence)
+        const updatedNode = await patchNodeRequest(node.id, after, { skipApply: true })
+        if (nodeSaveSequenceRef.current.get(node.id) === saveSequence) {
+          applyNodeUpdate(updatedNode)
+        }
         pushHistory({
           undo: async () => {
             await patchNodeRequest(node.id, before)
@@ -1599,6 +1612,11 @@ function App() {
       return
     }
 
+    if (selectedNode.id === editTargetId) {
+      setMoveParentId(selectedNode.parent_id ?? '')
+      return
+    }
+
     setEditTargetId(selectedNode.id)
     setEditForm({
       name: selectedNode.name,
@@ -1607,7 +1625,7 @@ function App() {
     })
     setMoveParentId(selectedNode.parent_id ?? '')
     setPreviewTransform({ x: 0, y: 0, scale: 1 })
-  }, [selectedNode])
+  }, [editTargetId, selectedNode])
 
   useEffect(() => {
     setError('')
