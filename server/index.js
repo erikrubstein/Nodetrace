@@ -16,8 +16,10 @@ const tempDir = path.join(dataDir, 'tmp')
 const dbPath = path.join(dataDir, 'photomap.db')
 const distDir = path.join(baseDir, 'dist')
 const projectEventClients = new Map()
-const activeDesktopClients = new Map()
+const activeDesktopSessions = new Map()
+const activeMobileConnections = new Map()
 const CLIENT_TTL_MS = 45000
+const MOBILE_CONNECTION_TTL_MS = 30000
 
 fs.mkdirSync(uploadsDir, { recursive: true })
 fs.mkdirSync(tempDir, { recursive: true })
@@ -1240,34 +1242,42 @@ function broadcastProjectEvent(projectId, payload = { type: 'project-updated' })
   }
 }
 
-function getProjectClientMap(projectId) {
-  let clients = activeDesktopClients.get(projectId)
-  if (!clients) {
-    clients = new Map()
-    activeDesktopClients.set(projectId, clients)
-  }
-  return clients
-}
-
-function cleanupProjectClients(projectId) {
-  const clients = activeDesktopClients.get(projectId)
-  if (!clients) {
-    return []
-  }
-
+function cleanupDesktopSessions() {
   const cutoff = Date.now() - CLIENT_TTL_MS
-  for (const [clientId, client] of clients) {
-    if (client.updatedAt < cutoff) {
-      clients.delete(clientId)
+  for (const [sessionId, session] of activeDesktopSessions) {
+    if (session.updatedAt < cutoff) {
+      activeDesktopSessions.delete(sessionId)
     }
   }
+}
 
-  if (clients.size === 0) {
-    activeDesktopClients.delete(projectId)
-    return []
+function listProjectSessions(projectId) {
+  cleanupDesktopSessions()
+  return Array.from(activeDesktopSessions.values()).filter((session) => session.projectId === projectId)
+}
+
+function cleanupMobileConnections() {
+  const cutoff = Date.now() - MOBILE_CONNECTION_TTL_MS
+  for (const [sessionId, connections] of activeMobileConnections) {
+    for (const [connectionId, connection] of connections) {
+      if (connection.updatedAt < cutoff) {
+        connections.delete(connectionId)
+      }
+    }
+    if (connections.size === 0) {
+      activeMobileConnections.delete(sessionId)
+    }
   }
+}
 
-  return Array.from(clients.values())
+function getMobileConnectionCount(sessionId) {
+  cleanupMobileConnections()
+  return activeMobileConnections.get(sessionId)?.size || 0
+}
+
+function getDesktopSession(sessionId) {
+  cleanupDesktopSessions()
+  return activeDesktopSessions.get(sessionId) || null
 }
 
 app.use(express.json({ limit: '5mb' }))
@@ -1316,11 +1326,11 @@ app.get('/api/projects/:id/clients', (req, res, next) => {
     const project = assertProject(req.params.id)
     const projectId = project.id
 
-    const clients = cleanupProjectClients(projectId).sort((a, b) => a.name.localeCompare(b.name))
+    const clients = listProjectSessions(projectId).sort((a, b) => a.id.localeCompare(b.id))
     res.json(
       clients.map((client) => ({
         id: client.id,
-        name: client.name,
+        name: `Session ${client.id}`,
         selectedNodeId: client.selectedNodeId,
         selectedNodeName: client.selectedNodeName,
       })),
@@ -1341,17 +1351,135 @@ app.patch('/api/projects/:id/clients/:clientId', (req, res, next) => {
     const selectedNode = assertNode(selectedNodeId)
     ensureNodeBelongsToProject(selectedNode, projectId)
 
-    const clients = getProjectClientMap(projectId)
-    clients.set(clientId, {
+    activeDesktopSessions.set(clientId, {
       id: clientId,
-      name: name || `Desktop ${clientId.slice(-4)}`,
+      name: name || `Session ${clientId}`,
+      projectId,
+      projectName: project.name,
       selectedNodeId,
       selectedNodeName: selectedNode.name,
       updatedAt: Date.now(),
     })
 
-    cleanupProjectClients(projectId)
+    cleanupDesktopSessions()
     res.json({ ok: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/sessions/:sessionId', (req, res, next) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
+    const session = getDesktopSession(sessionId)
+    if (!session) {
+      return res.status(404).json({ error: 'Session is not active' })
+    }
+
+    res.json({
+      id: session.id,
+      projectId: session.projectId,
+      projectName: session.projectName,
+      selectedNodeId: session.selectedNodeId,
+      selectedNodeName: session.selectedNodeName,
+      connectionCount: getMobileConnectionCount(session.id),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/sessions/:sessionId', (req, res, next) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
+    const project = assertProject(req.body.projectId)
+    const projectId = project.id
+    const selectedNodeId = String(req.body.selectedNodeId || '').trim()
+    const selectedNode = assertNode(selectedNodeId)
+    ensureNodeBelongsToProject(selectedNode, projectId)
+
+    activeDesktopSessions.set(sessionId, {
+      id: sessionId,
+      name: `Session ${sessionId}`,
+      projectId,
+      projectName: project.name,
+      selectedNodeId,
+      selectedNodeName: selectedNode.name,
+      updatedAt: Date.now(),
+    })
+
+    cleanupDesktopSessions()
+    res.json({
+      ok: true,
+      id: sessionId,
+      projectId,
+      projectName: project.name,
+      selectedNodeId,
+      selectedNodeName: selectedNode.name,
+      connectionCount: getMobileConnectionCount(sessionId),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/sessions/:sessionId/connections/:connectionId', (req, res, next) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
+    const connectionId = String(req.params.connectionId || '').trim().toLowerCase()
+    const session = getDesktopSession(sessionId)
+    if (!session) {
+      return res.status(404).json({ error: 'Session is not active' })
+    }
+
+    let connections = activeMobileConnections.get(sessionId)
+    if (!connections) {
+      connections = new Map()
+      activeMobileConnections.set(sessionId, connections)
+    }
+    connections.set(connectionId, {
+      id: connectionId,
+      updatedAt: Date.now(),
+    })
+
+    res.json({
+      ok: true,
+      connectionCount: getMobileConnectionCount(sessionId),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/sessions/:sessionId/connections/:connectionId', (req, res, next) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
+    const connectionId = String(req.params.connectionId || '').trim().toLowerCase()
+    const connections = activeMobileConnections.get(sessionId)
+    if (connections) {
+      connections.delete(connectionId)
+      if (connections.size === 0) {
+        activeMobileConnections.delete(sessionId)
+      }
+    }
+    res.status(204).send()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/sessions/:sessionId/connections/:connectionId/release', (req, res, next) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
+    const connectionId = String(req.params.connectionId || '').trim().toLowerCase()
+    const connections = activeMobileConnections.get(sessionId)
+    if (connections) {
+      connections.delete(connectionId)
+      if (connections.size === 0) {
+        activeMobileConnections.delete(sessionId)
+      }
+    }
+    res.status(204).send()
   } catch (error) {
     next(error)
   }
@@ -1431,7 +1559,12 @@ app.delete('/api/projects/:id', (req, res, next) => {
     const project = assertProject(req.params.id)
     const projectId = project.id
     broadcastProjectEvent(projectId, { type: 'project-deleted' })
-    activeDesktopClients.delete(projectId)
+    for (const [sessionId, session] of activeDesktopSessions) {
+      if (session.projectId === projectId) {
+        activeDesktopSessions.delete(sessionId)
+        activeMobileConnections.delete(sessionId)
+      }
+    }
     deleteProjectRecursive(projectId)
     res.status(204).send()
   } catch (error) {
@@ -1549,10 +1682,12 @@ app.post('/api/projects/:id/folders', (req, res, next) => {
     const clientId = String(req.body.clientId || '').trim()
     let parentId = String(req.body.parentId || '').trim() || null
     if (!parentId && clientId) {
-      const clients = cleanupProjectClients(projectId)
-      const controllingClient = clients.find((client) => client.id === clientId)
+      const controllingClient = getDesktopSession(clientId)
       if (!controllingClient) {
         return res.status(400).json({ error: 'Selected client is not active' })
+      }
+      if (controllingClient.projectId !== projectId) {
+        return res.status(400).json({ error: 'Selected client is controlling a different project' })
       }
       parentId = controllingClient.selectedNodeId
     }
@@ -1596,10 +1731,12 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
     let parentId = String(req.body.parentId || '').trim() || null
     let variantOfId = req.body.variantOfId != null ? String(req.body.variantOfId).trim() : null
     if (!parentId && clientId) {
-      const clients = cleanupProjectClients(projectId)
-      const controllingClient = clients.find((client) => client.id === clientId)
+      const controllingClient = getDesktopSession(clientId)
       if (!controllingClient) {
         return res.status(400).json({ error: 'Selected client is not active' })
+      }
+      if (controllingClient.projectId !== projectId) {
+        return res.status(400).json({ error: 'Selected client is controlling a different project' })
       }
       if (variantRequested) {
         variantOfId = controllingClient.selectedNodeId
@@ -1627,6 +1764,65 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
     const originalFile = req.files?.file?.[0]
     const previewFile = req.files?.preview?.[0] || null
 
+    if (!originalFile) {
+      return res.status(400).json({ error: 'Photo file is required' })
+    }
+
+    const requestedName = String(req.body.name || '').trim()
+    const resolvedName =
+      requestedName && requestedName !== '<untitled>' ? requestedName : createUntitledName(projectId)
+    const nodeId = createNode({
+      project_id: projectId,
+      parent_id: parentNode?.id ?? null,
+      variant_of_id: variantOfId,
+      type: 'photo',
+      name: resolvedName,
+      notes: String(req.body.notes || '').trim(),
+      tags: parseTags(req.body.tags),
+      image_path: path.relative(uploadsDir, originalFile.path),
+      preview_path: previewFile ? path.relative(uploadsDir, previewFile.path) : null,
+      original_filename: originalFile.originalname,
+    })
+
+    broadcastProjectEvent(projectId)
+    res.status(201).json(serializeNode(assertNode(nodeId)))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/sessions/:sessionId/photos', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'preview', maxCount: 1 }]), (req, res, next) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
+    const session = getDesktopSession(sessionId)
+    if (!session) {
+      return res.status(404).json({ error: 'Session is not active' })
+    }
+
+    const project = assertProject(session.projectId)
+    const projectId = project.id
+    const variantRequested = String(req.body.variant || '').trim() === 'true'
+    let parentId = session.selectedNodeId
+    let variantOfId = null
+
+    if (variantRequested) {
+      const rawAnchorNode = assertNode(session.selectedNodeId)
+      ensureNodeBelongsToProject(rawAnchorNode, projectId)
+      const anchorNode = resolveVariantAnchor(rawAnchorNode)
+      parentId = anchorNode.parent_id
+      variantOfId = anchorNode.id
+    }
+
+    const parentNode = parentId != null ? assertNode(parentId) : null
+    if (parentNode) {
+      ensureNodeBelongsToProject(parentNode, projectId)
+      if (!variantOfId) {
+        ensureCanHaveChildren(parentNode)
+      }
+    }
+
+    const originalFile = req.files?.file?.[0]
+    const previewFile = req.files?.preview?.[0] || null
     if (!originalFile) {
       return res.status(400).json({ error: 'Photo file is required' })
     }

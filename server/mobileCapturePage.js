@@ -46,6 +46,14 @@ export function renderMobileCapturePage() {
         gap: 10px;
       }
 
+      .shell.connect-only {
+        justify-content: center;
+      }
+
+      .shell.connected {
+        justify-content: flex-start;
+      }
+
       .panel {
         background: var(--panel);
         border-radius: 10px;
@@ -66,6 +74,7 @@ export function renderMobileCapturePage() {
       }
 
       select,
+      input,
       button {
         width: 100%;
         border: none;
@@ -73,10 +82,16 @@ export function renderMobileCapturePage() {
         font: inherit;
       }
 
-      select {
+      select,
+      input {
         background: var(--surface);
         color: var(--text);
         padding: 12px 10px;
+        font-size: 16px;
+      }
+
+      input {
+        text-transform: lowercase;
       }
 
       button {
@@ -110,74 +125,129 @@ export function renderMobileCapturePage() {
         grid-template-columns: 1fr;
       }
 
+      .capture-shell {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .connect-actions {
+        display: grid;
+        gap: 10px;
+      }
+
       .capture-variant-button {
         background: var(--surface);
         color: var(--text);
         border-radius: 12px;
       }
 
+      button:disabled,
+      .capture-button.disabled {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+
       .status {
         min-height: 1.2em;
         color: var(--muted);
         font-size: 0.76rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .status.error {
         color: #d46868;
       }
+
+      .hidden {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
-    <main class="shell">
-      <section class="panel">
+    <main id="shell" class="shell connect-only">
+      <section id="connectPanel" class="panel">
         <div class="title">PhotoMap Capture</div>
 
         <label>
-          <span>Project</span>
-          <select id="projectSelect"></select>
-        </label>
-
-        <label>
-          <span>Client in Control</span>
-          <select id="clientSelect"></select>
+          <span>Session</span>
+          <input id="sessionInput" type="text" maxlength="5" autocomplete="off" autocapitalize="none" spellcheck="false" />
         </label>
 
         <div id="status" class="status"></div>
+        <div class="connect-actions">
+          <button id="connectButton" type="button">Connect</button>
+        </div>
       </section>
 
-      <label class="capture-button" for="captureInput">Tap Anywhere To Take Photo</label>
-      <input id="captureInput" class="capture-input" type="file" accept="image/*" capture="environment" />
+      <section id="captureShell" class="capture-shell hidden">
+        <section class="panel">
+          <div class="title">Connected</div>
+          <div id="sessionReadout" class="status"></div>
+          <button id="disconnectButton" type="button">Disconnect</button>
+        </section>
+        <label class="capture-button" for="captureInput">Tap Anywhere To Take Photo</label>
+        <input id="captureInput" class="capture-input" type="file" accept="image/*" capture="environment" />
 
-      <div class="secondary-row">
-        <button id="variantButton" class="capture-variant-button" type="button">Take Variant Photo</button>
-        <button id="chooseButton" type="button">Choose Existing Photo</button>
-      </div>
+        <div class="secondary-row">
+          <button id="variantButton" class="capture-variant-button" type="button">Take Variant Photo</button>
+          <button id="chooseButton" type="button">Choose Existing Photo</button>
+        </div>
+      </section>
     </main>
 
     <script>
-      const projectSelect = document.getElementById('projectSelect')
-      const clientSelect = document.getElementById('clientSelect')
+      const shell = document.getElementById('shell')
+      const connectPanel = document.getElementById('connectPanel')
+      const captureShell = document.getElementById('captureShell')
+      const sessionInput = document.getElementById('sessionInput')
+      const connectButton = document.getElementById('connectButton')
       const captureInput = document.getElementById('captureInput')
+      const captureButton = document.querySelector('.capture-button')
       const variantButton = document.getElementById('variantButton')
       const chooseButton = document.getElementById('chooseButton')
+      const disconnectButton = document.getElementById('disconnectButton')
+      const sessionReadout = document.getElementById('sessionReadout')
       const statusEl = document.getElementById('status')
       const search = new URLSearchParams(window.location.search)
       let pollHandle = null
       let uploadMode = 'child'
+      let sessionInfo = null
+      let hasConnectedSession = false
+      const connectionStorageKey = 'photomap-capture-connection-id'
+      const connectionId =
+        localStorage.getItem(connectionStorageKey) ||
+        (() => {
+          const generated = Math.random().toString(36).slice(2, 10)
+          localStorage.setItem(connectionStorageKey, generated)
+          return generated
+        })()
 
       function updateUrlParams() {
         const url = new URL(window.location.href)
-        if (projectSelect.value) {
-          url.searchParams.set('project', projectSelect.value)
+        if (sessionInput.value) {
+          url.searchParams.set('session', sessionInput.value)
         } else {
-          url.searchParams.delete('project')
-        }
-        if (clientSelect.value) {
-          url.searchParams.set('clientId', clientSelect.value)
-        } else {
-          url.searchParams.delete('clientId')
+          url.searchParams.delete('session')
         }
         window.history.replaceState({}, '', url)
+      }
+
+      function setConnectedState(connected) {
+        shell.classList.toggle('connect-only', !connected)
+        shell.classList.toggle('connected', connected)
+        connectPanel.classList.toggle('hidden', connected)
+        captureShell.classList.toggle('hidden', !connected)
+      }
+
+      function setCaptureEnabled(enabled) {
+        captureButton.classList.toggle('disabled', !enabled)
+        variantButton.disabled = !enabled
+        chooseButton.disabled = !enabled
       }
 
       function setStatus(message, isError = false) {
@@ -197,6 +267,54 @@ export function renderMobileCapturePage() {
         }
 
         return response.json()
+      }
+
+      async function heartbeatConnection() {
+        const sessionId = sessionInput.value.trim().toLowerCase()
+        if (!sessionId || !sessionInfo?.id) {
+          return
+        }
+
+        await api('/api/sessions/' + sessionId + '/connections/' + connectionId, {
+          method: 'PATCH',
+        })
+      }
+
+      async function disconnectSession() {
+        const sessionId = sessionInput.value.trim().toLowerCase()
+        window.clearInterval(pollHandle)
+        if (sessionId) {
+          await fetch('/api/sessions/' + sessionId + '/connections/' + connectionId, {
+            method: 'DELETE',
+          }).catch(() => {})
+        }
+        sessionInfo = null
+        hasConnectedSession = false
+        sessionInput.value = ''
+        sessionReadout.textContent = ''
+        updateUrlParams()
+        setConnectedState(false)
+        setCaptureEnabled(false)
+        setStatus('Enter a session code.')
+      }
+
+      function releaseConnection() {
+        const sessionId = sessionInput.value.trim().toLowerCase()
+        if (!sessionId || !hasConnectedSession) {
+          return
+        }
+
+        const url = '/api/sessions/' + sessionId + '/connections/' + connectionId
+        if (navigator.sendBeacon) {
+          const blob = new Blob([], { type: 'application/octet-stream' })
+          navigator.sendBeacon(url + '/release', blob)
+          return
+        }
+
+        fetch(url, {
+          method: 'DELETE',
+          keepalive: true,
+        }).catch(() => {})
       }
 
       async function createPreviewFile(file) {
@@ -231,63 +349,43 @@ export function renderMobileCapturePage() {
         }
       }
 
-      async function loadProjects() {
-        const projects = await api('/api/projects')
-        projectSelect.innerHTML = ''
-
-        for (const project of projects) {
-          const option = document.createElement('option')
-          option.value = project.id
-          option.textContent = project.name
-          projectSelect.append(option)
-        }
-
-        const requestedProjectId = search.get('project') || search.get('projectId')
-        if (requestedProjectId && projects.some((project) => String(project.id) === requestedProjectId)) {
-          projectSelect.value = requestedProjectId
-        }
-
+      async function refreshSession() {
+        const sessionId = sessionInput.value.trim().toLowerCase()
         updateUrlParams()
-        await loadClients()
-      }
-
-      async function loadClients() {
-        if (!projectSelect.value) {
-          clientSelect.innerHTML = ''
+        if (!sessionId) {
+          sessionInfo = null
+          hasConnectedSession = false
+          setConnectedState(false)
+          setCaptureEnabled(false)
+          setStatus('Enter a session code.')
           return
         }
 
-        const clients = await api(\`/api/projects/\${projectSelect.value}/clients\`)
-        const previousClientId = clientSelect.value
-        clientSelect.innerHTML = ''
+        sessionInput.value = sessionId
 
-        if (clients.length === 0) {
-          const option = document.createElement('option')
-          option.value = ''
-          option.textContent = 'No active desktop clients'
-          clientSelect.append(option)
-          return
+        try {
+          sessionInfo = await api(\`/api/sessions/\${sessionId}\`)
+          await heartbeatConnection()
+          hasConnectedSession = true
+          setConnectedState(true)
+          setCaptureEnabled(true)
+          sessionReadout.textContent = \`Session \${sessionId} | \${sessionInfo.projectName} -> \${sessionInfo.selectedNodeName}\`
+          setStatus(\`\${sessionInfo.projectName} -> \${sessionInfo.selectedNodeName}\`)
+        } catch (error) {
+          sessionInfo = null
+          setCaptureEnabled(false)
+          if (!hasConnectedSession) {
+            setConnectedState(false)
+          } else {
+            setConnectedState(true)
+            sessionReadout.textContent = \`Session \${sessionId} | connection lost\`
+          }
+          setStatus(error.message, true)
         }
-
-        for (const client of clients) {
-          const option = document.createElement('option')
-          option.value = client.id
-          option.textContent = \`\${client.name} -> \${client.selectedNodeName}\`
-          clientSelect.append(option)
-        }
-
-        const requestedClientId = search.get('clientId')
-        if (requestedClientId && clients.some((client) => client.id === requestedClientId)) {
-          clientSelect.value = requestedClientId
-        } else if (previousClientId && clients.some((client) => client.id === previousClientId)) {
-          clientSelect.value = previousClientId
-        }
-
-        updateUrlParams()
       }
 
       async function uploadSelectedFiles(files) {
-        if (!files.length || !projectSelect.value || !clientSelect.value) {
+        if (!files.length || !sessionInfo?.id) {
           return
         }
 
@@ -297,7 +395,6 @@ export function renderMobileCapturePage() {
           for (const file of files) {
             const previewFile = await createPreviewFile(file)
             const formData = new FormData()
-            formData.append('clientId', clientSelect.value)
             formData.append('variant', uploadMode === 'variant' ? 'true' : 'false')
             formData.append('name', '<untitled>')
             formData.append('notes', '')
@@ -307,34 +404,33 @@ export function renderMobileCapturePage() {
               formData.append('preview', previewFile)
             }
 
-            await api(\`/api/projects/\${projectSelect.value}/photos\`, {
+            await api(\`/api/sessions/\${sessionInfo.id}/photos\`, {
               method: 'POST',
               body: formData,
             })
           }
 
           captureInput.value = ''
-          setStatus('Uploaded.')
-          await loadClients()
+          await refreshSession()
+          setStatus(\`Uploaded to \${sessionInfo?.selectedNodeName || 'selected node'}.\`)
         } catch (error) {
           setStatus(error.message, true)
         }
       }
 
-      function startClientPolling() {
+      function startSessionPolling() {
         window.clearInterval(pollHandle)
         pollHandle = window.setInterval(() => {
-          loadClients().catch((error) => setStatus(error.message, true))
+          refreshSession().catch((error) => setStatus(error.message, true))
         }, 4000)
       }
 
-      projectSelect.addEventListener('change', () => {
-        updateUrlParams()
-        loadClients().catch((error) => setStatus(error.message, true))
+      sessionInput.addEventListener('input', () => {
+        sessionInput.value = sessionInput.value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5)
       })
 
-      clientSelect.addEventListener('change', () => {
-        updateUrlParams()
+      connectButton.addEventListener('click', () => {
+        refreshSession().catch((error) => setStatus(error.message, true))
       })
 
       captureInput.addEventListener('change', () => {
@@ -360,9 +456,30 @@ export function renderMobileCapturePage() {
         uploadMode = 'child'
       })
 
-      loadProjects()
-        .then(startClientPolling)
-        .catch((error) => setStatus(error.message, true))
+      disconnectButton.addEventListener('click', () => {
+        disconnectSession().catch((error) => setStatus(error.message, true))
+      })
+
+      window.addEventListener('pagehide', releaseConnection)
+      window.addEventListener('beforeunload', releaseConnection)
+
+      sessionInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          refreshSession().catch((error) => setStatus(error.message, true))
+        }
+      })
+
+      sessionInput.value = (search.get('session') || '').trim().toLowerCase()
+      startSessionPolling()
+      if (sessionInput.value) {
+        refreshSession()
+          .catch((error) => setStatus(error.message, true))
+      } else {
+        setConnectedState(false)
+        setCaptureEnabled(false)
+        setStatus('Enter a session code.')
+      }
     </script>
   </body>
 </html>`

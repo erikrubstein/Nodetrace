@@ -12,6 +12,28 @@ const defaultProjectSettings = {
   verticalGap: 44,
   imageMode: 'square',
 }
+const ID_FIRST_CHARS = 'abcdefghijklmnopqrstuvwxyz'
+const ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
+
+function generateShortId() {
+  let value = ID_FIRST_CHARS[Math.floor(Math.random() * ID_FIRST_CHARS.length)]
+  for (let index = 1; index < 5; index += 1) {
+    value += ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)]
+  }
+  return value
+}
+
+function getOrCreateSessionId() {
+  const storedValue = String(localStorage.getItem('photomap-desktop-client-id') || '').trim().toLowerCase()
+  if (/^[a-z][a-z0-9]{4}$/.test(storedValue)) {
+    return storedValue
+  }
+
+  const generated = generateShortId()
+  localStorage.setItem('photomap-desktop-client-id', generated)
+  localStorage.removeItem('photomap-desktop-client-name')
+  return generated
+}
 
 function getUrlState() {
   const params = new URLSearchParams(window.location.search)
@@ -173,6 +195,10 @@ function CameraIcon() {
 
 function PreviewIcon() {
   return <i aria-hidden="true" className="fa-solid fa-eye" />
+}
+
+function PhoneIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-mobile-screen-button" />
 }
 
 async function createPreviewFile(file) {
@@ -686,20 +712,7 @@ function buildClientTree(project, rows) {
 }
 
 function App() {
-  const desktopClientId =
-    localStorage.getItem('photomap-desktop-client-id') ||
-    (() => {
-      const generated = `desktop-${crypto.randomUUID()}`
-      localStorage.setItem('photomap-desktop-client-id', generated)
-      return generated
-    })()
-  const desktopClientName =
-    localStorage.getItem('photomap-desktop-client-name') ||
-    (() => {
-      const generated = `Desktop ${desktopClientId.slice(-4)}`
-      localStorage.setItem('photomap-desktop-client-name', generated)
-      return generated
-    })()
+  const desktopClientId = getOrCreateSessionId()
   const [projects, setProjects] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [tree, setTree] = useState(null)
@@ -745,6 +758,8 @@ function App() {
   const [cameraSelection, setCameraSelection] = useState(null)
   const [historyState, setHistoryState] = useState({ undo: 0, redo: 0 })
   const [loadedImages, setLoadedImages] = useState({})
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false)
+  const [mobileConnectionCount, setMobileConnectionCount] = useState(0)
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
   const nameInputRef = useRef(null)
@@ -971,14 +986,15 @@ function App() {
 
     async function publishSelection() {
       try {
-        await api(`/api/projects/${selectedProjectId}/clients/${desktopClientId}`, {
+        const payload = await api(`/api/sessions/${desktopClientId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            name: desktopClientName,
+            projectId: selectedProjectId,
             selectedNodeId: selectedNode.id,
           }),
         })
+        setMobileConnectionCount(payload.connectionCount || 0)
       } catch (publishError) {
         if (!cancelled) {
           setError(publishError.message)
@@ -993,7 +1009,43 @@ function App() {
       cancelled = true
       window.clearInterval(heartbeat)
     }
-  }, [desktopClientId, desktopClientName, selectedNode?.id, selectedProjectId])
+  }, [desktopClientId, selectedNode?.id, selectedProjectId])
+
+  useEffect(() => {
+    if (!desktopClientId || !selectedProjectId) {
+      setMobileConnectionCount(0)
+      return undefined
+    }
+
+    let cancelled = false
+
+    async function refreshSessionConnections() {
+      try {
+        const payload = await api(`/api/sessions/${desktopClientId}`)
+        if (!cancelled) {
+          setMobileConnectionCount(payload.connectionCount || 0)
+        }
+      } catch {
+        if (!cancelled) {
+          setMobileConnectionCount(0)
+        }
+      }
+    }
+
+    refreshSessionConnections()
+    const handle = window.setInterval(refreshSessionConnections, 5000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(handle)
+    }
+  }, [desktopClientId, selectedProjectId])
+
+  useEffect(() => {
+    if (mobileConnectionCount > 0) {
+      setSessionDialogOpen(false)
+    }
+  }, [mobileConnectionCount])
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -3026,6 +3078,21 @@ function App() {
             <GearIcon />
           </IconButton>
           <IconButton
+            aria-label="Show mobile capture session"
+            className={mobileConnectionCount > 0 ? 'icon-button--connected' : ''}
+            onClick={() => setSessionDialogOpen(true)}
+            tooltip="Mobile Capture"
+          >
+            {mobileConnectionCount > 0 ? (
+              <span className="icon-count-wrap">
+                <PhoneIcon />
+                <span className="icon-count">{mobileConnectionCount}</span>
+              </span>
+            ) : (
+              <PhoneIcon />
+            )}
+          </IconButton>
+          <IconButton
             aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
             tooltip={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
@@ -3400,7 +3467,7 @@ function App() {
           ) : null}
           <div className="canvas-caption">
             {tree?.project?.name || 'No project'} |{' '}
-            {selectedNode ? selectedNode.name : 'No node selected'} | {desktopClientName} |{' '}
+            {selectedNode ? selectedNode.name : 'No node selected'} |{' '}
             {tree?.nodes?.length ?? 0} nodes | {Math.round(transform.scale * 100)}%
           </div>
           {contextMenu ? (
@@ -3904,6 +3971,28 @@ function App() {
               </button>
               <button className="danger-button" disabled={busy} onClick={deleteNode} type="button">
                 Delete Node
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {sessionDialogOpen ? (
+        <div className="dialog-backdrop" onClick={() => setSessionDialogOpen(false)} role="presentation">
+          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+            <div className="dialog__title">Mobile Capture</div>
+            <div className="inspector__notice">
+              Enter this session code on your phone to connect capture directly to this desktop session.
+            </div>
+            <div className="session-code">{desktopClientId}</div>
+            <div className="inspector__notice">
+              {mobileConnectionCount > 0
+                ? `${mobileConnectionCount} active phone connection${mobileConnectionCount === 1 ? '' : 's'}`
+                : 'No active phone connections'}
+            </div>
+            <div className="dialog__actions">
+              <button className="ghost-button" onClick={() => setSessionDialogOpen(false)} type="button">
+                Close
               </button>
             </div>
           </div>
