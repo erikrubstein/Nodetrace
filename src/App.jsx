@@ -300,6 +300,10 @@ function countBranchItems(children = [], variants = []) {
   return childItems + variants.length
 }
 
+function formatItemCountLabel(count) {
+  return `${count} ${count === 1 ? 'Item' : 'Items'}`
+}
+
 function buildCollapsedPreviewNode(node) {
   return {
     ...node,
@@ -310,7 +314,7 @@ function buildCollapsedPreviewNode(node) {
               id: `collapsed-${node.id}`,
               parent_id: node.id,
               type: 'collapsed-group',
-              name: `${countDescendants(node)} Items`,
+              name: formatItemCountLabel(countDescendants(node)),
               collapsedGroupOf: node.id,
               totalItems: countDescendants(node),
               previewItems: collectCollapsedPreviewItems(node),
@@ -392,7 +396,7 @@ function buildVisibleTree(node, options = {}) {
           id: `collapsed-${node.id}`,
           parent_id: node.id,
           type: 'collapsed-group',
-          name: `${countDescendants(node)} Items`,
+          name: formatItemCountLabel(countDescendants(node)),
           collapsedGroupOf: node.id,
           totalItems: countDescendants(node),
           previewItems: collectCollapsedPreviewItems(node),
@@ -603,6 +607,13 @@ function findNode(node, targetId) {
     }
   }
 
+  for (const variant of node.variants || []) {
+    const match = findNode(variant, targetId)
+    if (match) {
+      return match
+    }
+  }
+
   return null
 }
 
@@ -624,6 +635,42 @@ function collectDescendantIds(node) {
   }
 
   return ids
+}
+
+function collectBlockedIdsForSelection(root, nodeIds) {
+  const blockedIds = new Set()
+  for (const nodeId of nodeIds) {
+    const node = findNode(root, nodeId)
+    if (!node) {
+      continue
+    }
+    for (const blockedId of collectDescendantIds(node)) {
+      blockedIds.add(blockedId)
+    }
+  }
+  return blockedIds
+}
+
+function getSelectionRootIds(root, nodeIds) {
+  const uniqueIds = Array.from(new Set(nodeIds.filter(Boolean)))
+  const selectedSet = new Set(uniqueIds)
+  return uniqueIds.filter((nodeId) => {
+    const node = findNode(root, nodeId)
+    if (!node) {
+      return false
+    }
+
+    let ancestorId = node.variant_of_id ?? node.parent_id
+    while (ancestorId != null) {
+      if (selectedSet.has(ancestorId)) {
+        return false
+      }
+      const ancestor = findNode(root, ancestorId)
+      ancestorId = ancestor ? ancestor.variant_of_id ?? ancestor.parent_id : null
+    }
+
+    return true
+  })
 }
 
 function flattenSubtreeNodes(node, items = []) {
@@ -717,6 +764,7 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [tree, setTree] = useState(null)
   const [selectedNodeId, setSelectedNodeId] = useState(null)
+  const [multiSelectedNodeIds, setMultiSelectedNodeIds] = useState([])
   const [theme, setTheme] = useState(() => localStorage.getItem('photomap-theme') || 'dark')
   const [status, setStatus] = useState('Loading projects...')
   const [error, setError] = useState('')
@@ -908,11 +956,47 @@ function App() {
     await runHistoryEntry('redo')
   }
 
+  function handleDialogEnter(event, action, canRun = true) {
+    if (event.key !== 'Enter' || event.shiftKey) {
+      return
+    }
+    if (event.target instanceof HTMLTextAreaElement) {
+      return
+    }
+    event.preventDefault()
+    if (canRun) {
+      action()
+    }
+  }
+
+  function toggleMultiSelection(nodeId) {
+    if (!nodeId || nodeId === selectedNodeId) {
+      return
+    }
+    setMultiSelectedNodeIds((current) =>
+      current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId],
+    )
+  }
+
   const selectedNode = tree?.nodes.find((node) => node.id === selectedNodeId) || null
   const editTargetNode = tree?.nodes.find((node) => node.id === editTargetId) || null
   const projectSettings = tree?.project?.settings || defaultProjectSettings
-  const selectedTreeNode = selectedNodeId ? findNode(tree?.root, selectedNodeId) : null
-  const blockedParentIds = collectDescendantIds(selectedTreeNode)
+  const effectiveSelectedNodeIds = useMemo(
+    () => [selectedNodeId, ...multiSelectedNodeIds].filter(Boolean),
+    [multiSelectedNodeIds, selectedNodeId],
+  )
+  const effectiveSelectedRootIds = useMemo(
+    () => getSelectionRootIds(tree?.root, effectiveSelectedNodeIds),
+    [effectiveSelectedNodeIds, tree?.root],
+  )
+  const effectiveSelectedNodes = useMemo(
+    () => effectiveSelectedRootIds.map((nodeId) => tree?.nodes.find((node) => node.id === nodeId)).filter(Boolean),
+    [effectiveSelectedRootIds, tree?.nodes],
+  )
+  const bulkSelectionCount = effectiveSelectedNodes.length
+  const hasBulkSelection = bulkSelectionCount > 1
+  const hasLockedSelectionRoot = effectiveSelectedNodes.some((node) => node.parent_id == null && !node.isVariant)
+  const blockedParentIds = collectBlockedIdsForSelection(tree?.root, effectiveSelectedRootIds)
   const parentOptions = collectParentOptions(tree?.root, blockedParentIds)
   const focusPathContext = useMemo(
     () =>
@@ -962,6 +1046,16 @@ function App() {
     redoStackRef.current = []
     updateHistoryCounts()
   }, [selectedProjectId])
+
+  useEffect(() => {
+    setMultiSelectedNodeIds([])
+  }, [selectedProjectId])
+
+  useEffect(() => {
+    setMultiSelectedNodeIds((current) =>
+      current.filter((nodeId) => nodeId !== selectedNodeId && tree?.nodes.some((node) => node.id === nodeId)),
+    )
+  }, [selectedNodeId, tree?.nodes])
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -2313,7 +2407,12 @@ function App() {
   }
 
   async function moveNodeTo(parentId) {
-    if (!selectedNode || !parentId || (selectedNode.parent_id == null && !selectedNode.isVariant)) {
+    if (!parentId || effectiveSelectedNodes.length === 0) {
+      return
+    }
+
+    const movableNodes = effectiveSelectedNodes.filter((node) => node.parent_id != null || node.isVariant)
+    if (movableNodes.length === 0) {
       return
     }
 
@@ -2321,43 +2420,54 @@ function App() {
     setError('')
 
     try {
-      const previousPayload =
-        selectedNode.variant_of_id != null
-          ? { variantOfId: selectedNode.variant_of_id }
-          : { parentId: selectedNode.parent_id, variantOfId: null }
-      const nextPayload = { parentId, variantOfId: null }
+      const moveEntries = movableNodes.map((node) => ({
+        nodeId: node.id,
+        previousPayload:
+          node.variant_of_id != null
+            ? { variantOfId: node.variant_of_id }
+            : { parentId: node.parent_id, variantOfId: null },
+        nextPayload: { parentId, variantOfId: null },
+      }))
 
-      const rollbackLocalEvent = beginLocalEventExpectation()
-      let updatedNode = null
-      try {
-        updatedNode = await moveNodeRequest(selectedNode.id, nextPayload)
-      } catch (error) {
-        rollbackLocalEvent()
-        throw error
+      const updatedNodes = []
+      for (const entry of moveEntries) {
+        const rollbackLocalEvent = beginLocalEventExpectation()
+        try {
+          const updatedNode = await moveNodeRequest(entry.nodeId, entry.nextPayload)
+          updatedNodes.push(updatedNode)
+          applyNodeUpdate(updatedNode)
+        } catch (error) {
+          rollbackLocalEvent()
+          throw error
+        }
       }
-      applyNodeUpdate(updatedNode)
+
       pushHistory({
         undo: async () => {
-          const rollbackUndoEvent = beginLocalEventExpectation()
-          let revertedNode = null
-          try {
-            revertedNode = await moveNodeRequest(selectedNode.id, previousPayload)
-          } catch (error) {
-            rollbackUndoEvent()
-            throw error
+          for (const entry of moveEntries) {
+            const rollbackUndoEvent = beginLocalEventExpectation()
+            let revertedNode = null
+            try {
+              revertedNode = await moveNodeRequest(entry.nodeId, entry.previousPayload)
+            } catch (error) {
+              rollbackUndoEvent()
+              throw error
+            }
+            applyNodeUpdate(revertedNode)
           }
-          applyNodeUpdate(revertedNode)
         },
         redo: async () => {
-          const rollbackRedoEvent = beginLocalEventExpectation()
-          let redoneNode = null
-          try {
-            redoneNode = await moveNodeRequest(selectedNode.id, nextPayload)
-          } catch (error) {
-            rollbackRedoEvent()
-            throw error
+          for (const entry of moveEntries) {
+            const rollbackRedoEvent = beginLocalEventExpectation()
+            let redoneNode = null
+            try {
+              redoneNode = await moveNodeRequest(entry.nodeId, entry.nextPayload)
+            } catch (error) {
+              rollbackRedoEvent()
+              throw error
+            }
+            applyNodeUpdate(redoneNode)
           }
-          applyNodeUpdate(redoneNode)
         },
       })
     } catch (submitError) {
@@ -2368,7 +2478,12 @@ function App() {
   }
 
   async function deleteNode() {
-    if (!selectedNode || selectedNode.parent_id == null) {
+    if (!selectedNode) {
+      return
+    }
+
+    const deletableNodes = effectiveSelectedNodes.filter((node) => node.parent_id != null)
+    if (deletableNodes.length === 0) {
       return
     }
 
@@ -2376,61 +2491,89 @@ function App() {
     setError('')
 
     try {
-      const fallbackId = selectedNode.parent_id
-      const subtreeNode = selectedTreeNode || findNode(tree?.root, selectedNode.id)
-      const snapshot = subtreeNode ? await createDeleteSnapshot(subtreeNode) : null
-      let currentRootId = selectedNode.id
+      const deleteEntries = []
+      for (const node of deletableNodes) {
+        const subtreeNode = findNode(tree?.root, node.id)
+        const subtreeIds = Array.from(
+          collectDescendantIds(subtreeNode || { id: node.id, children: [], variants: [] }),
+        )
+        deleteEntries.push({
+          node,
+          fallbackId: node.parent_id,
+          subtreeNode,
+          subtreeIds,
+          snapshot: subtreeNode ? await createDeleteSnapshot(subtreeNode) : null,
+          currentRootId: node.id,
+        })
+      }
 
-      const subtreeIds = Array.from(collectDescendantIds(subtreeNode || { id: currentRootId, children: [], variants: [] }))
-      const rollbackLocalEvent = beginLocalEventExpectation()
-      try {
-        await deleteNodeRequest(currentRootId)
-      } catch (error) {
-        rollbackLocalEvent()
-        throw error
+      for (const entry of [...deleteEntries].reverse()) {
+        const rollbackLocalEvent = beginLocalEventExpectation()
+        try {
+          await deleteNodeRequest(entry.currentRootId)
+        } catch (error) {
+          rollbackLocalEvent()
+          throw error
+        }
       }
       setDeleteNodeOpen(false)
-      removeNodesFromTree(subtreeIds)
-      updateProjectListNodeCount(-subtreeIds.length)
-      setSelectedNodeId(fallbackId)
-      if (snapshot) {
+      const removedIds = new Set(deleteEntries.flatMap((entry) => entry.subtreeIds))
+      removeNodesFromTree(Array.from(removedIds))
+      updateProjectListNodeCount(-removedIds.size)
+      setMultiSelectedNodeIds([])
+      setSelectedNodeId(selectedNode.parent_id ?? deleteEntries[0]?.fallbackId ?? null)
+
+      if (deleteEntries.some((entry) => entry.snapshot)) {
         pushHistory({
           undo: async () => {
-            const rollbackUndoEvent = beginLocalEventExpectation()
-            let restoredRoot = null
-            try {
-              restoredRoot = await restoreDeletedSubtree(selectedProjectId, snapshot)
-            } catch (error) {
-              rollbackUndoEvent()
-              throw error
-            }
-            if (!restoredRoot) {
-              rollbackUndoEvent()
-              return
-            }
+            const restoredNodeIds = []
+            for (const entry of deleteEntries) {
+              if (!entry.snapshot) {
+                continue
+              }
+              const rollbackUndoEvent = beginLocalEventExpectation()
+              let restoredRoot = null
+              try {
+                restoredRoot = await restoreDeletedSubtree(selectedProjectId, entry.snapshot)
+              } catch (error) {
+                rollbackUndoEvent()
+                throw error
+              }
+              if (!restoredRoot) {
+                rollbackUndoEvent()
+                continue
+              }
 
-            const restoredNodes = flattenSubtreeNodes(restoredRoot)
-            currentRootId = restoredRoot.id
-            appendNodesToTree(restoredNodes)
-            updateProjectListNodeCount(restoredNodes.length)
-            setSelectedNodeId(restoredRoot.id)
+              const restoredNodes = flattenSubtreeNodes(restoredRoot)
+              entry.currentRootId = restoredRoot.id
+              restoredNodeIds.push(restoredRoot.id)
+              appendNodesToTree(restoredNodes)
+              updateProjectListNodeCount(restoredNodes.length)
+            }
+            setSelectedNodeId(restoredNodeIds[0] || selectedNodeId)
+            setMultiSelectedNodeIds(restoredNodeIds.slice(1))
           },
           redo: async () => {
-            const rollbackRedoEvent = beginLocalEventExpectation()
-            const currentTree = treeRef.current
-            const currentSubtreeNode = findNode(currentTree?.root, currentRootId)
-            const currentSubtreeIds = Array.from(
-              collectDescendantIds(currentSubtreeNode || { id: currentRootId, children: [], variants: [] }),
-            )
-            try {
-              await deleteNodeRequest(currentRootId)
-            } catch (error) {
-              rollbackRedoEvent()
-              throw error
+            const removedAgainIds = new Set()
+            for (const entry of [...deleteEntries].reverse()) {
+              const rollbackRedoEvent = beginLocalEventExpectation()
+              const currentTree = treeRef.current
+              const currentSubtreeNode = findNode(currentTree?.root, entry.currentRootId)
+              const currentSubtreeIds = Array.from(
+                collectDescendantIds(currentSubtreeNode || { id: entry.currentRootId, children: [], variants: [] }),
+              )
+              try {
+                await deleteNodeRequest(entry.currentRootId)
+              } catch (error) {
+                rollbackRedoEvent()
+                throw error
+              }
+              currentSubtreeIds.forEach((id) => removedAgainIds.add(id))
             }
-            removeNodesFromTree(currentSubtreeIds)
-            updateProjectListNodeCount(-currentSubtreeIds.length)
-            setSelectedNodeId(fallbackId)
+            removeNodesFromTree(Array.from(removedAgainIds))
+            updateProjectListNodeCount(-removedAgainIds.size)
+            setMultiSelectedNodeIds([])
+            setSelectedNodeId(selectedNode.parent_id ?? deleteEntries[0]?.fallbackId ?? null)
           },
         })
       }
@@ -3364,6 +3507,8 @@ function App() {
               <button
                 key={item.id}
                 className={`graph-node ${selectedNodeId === item.id ? 'selected' : ''} ${
+                  multiSelectedNodeIds.includes(item.id) ? 'selected-secondary' : ''
+                } ${
                   dragHoverNodeId === item.id ? 'drop-target' : ''
                 } ${projectSettings.imageMode === 'square' ? 'image-square' : 'image-original'} ${
                   item.node.type === 'photo' ? 'photo-node' : 'folder-node'
@@ -3387,13 +3532,18 @@ function App() {
                   if (item.node.type === 'collapsed-group') {
                     return
                   }
-                  if (event.shiftKey) {
+                  if (event.ctrlKey || event.metaKey) {
                     if (!focusPathMode && !item.node.isVariant) {
                       void setCollapsed(item.id, !item.node.collapsed)
                     }
                     return
                   }
+                  if (event.shiftKey) {
+                    toggleMultiSelection(item.id)
+                    return
+                  }
                   void saveNodeDraft(editTargetNode, editForm)
+                  setMultiSelectedNodeIds([])
                   setSelectedNodeId(item.id)
                 }}
                 onPointerDown={(event) => {
@@ -3666,10 +3816,16 @@ function App() {
                   </div>
 
                   <div className="inspector__section field-stack">
+                    {hasBulkSelection ? (
+                      <div className="inspector__notice">
+                        {bulkSelectionCount} nodes selected for bulk actions. Preview and editing still follow{' '}
+                        {selectedNode.name}.
+                      </div>
+                    ) : null}
                     <label>
                       <span>Parent</span>
                       <select
-                        disabled={(selectedNode.parent_id == null && !selectedNode.isVariant) || busy}
+                        disabled={hasLockedSelectionRoot || busy}
                         value={moveParentId}
                         onChange={async (event) => {
                           const nextParentId = event.target.value
@@ -3690,11 +3846,11 @@ function App() {
                     </label>
                     <button
                       className="danger-button wide"
-                      disabled={selectedNode.parent_id == null || busy}
+                      disabled={hasLockedSelectionRoot || busy}
                       onClick={() => setDeleteNodeOpen(true)}
                       type="button"
                     >
-                      Delete Node
+                      {hasBulkSelection ? `Delete ${bulkSelectionCount} Nodes` : 'Delete Node'}
                     </button>
                     <div className="inspector__notice">Node ID: {selectedNode.id}</div>
                   </div>
@@ -3797,7 +3953,12 @@ function App() {
 
       {showProjectDialog === 'create' ? (
         <div className="dialog-backdrop" onClick={() => setShowProjectDialog(null)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, createProject, Boolean(projectName.trim()) && !busy)}
+            role="dialog"
+          >
             <div className="dialog__title">Create Project</div>
             <input
               autoFocus
@@ -3848,7 +4009,20 @@ function App() {
 
       {newFolderDialog ? (
         <div className="dialog-backdrop" onClick={() => !busy && setNewFolderDialog(null)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) =>
+              handleDialogEnter(
+                event,
+                () => {
+                  void submitNewFolder()
+                },
+                Boolean(newFolderName.trim()) && !busy,
+              )
+            }
+            role="dialog"
+          >
             <div className="dialog__title">New Folder</div>
             <input
               autoFocus
@@ -3875,7 +4049,12 @@ function App() {
 
       {showProjectDialog === 'export' ? (
         <div className="dialog-backdrop" onClick={() => !busy && setShowProjectDialog(null)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, exportProject, Boolean(selectedProjectId) && !busy)}
+            role="dialog"
+          >
             <div className="dialog__title">Export Project</div>
             <input
               autoFocus
@@ -3906,7 +4085,12 @@ function App() {
 
       {showProjectDialog === 'import' ? (
         <div className="dialog-backdrop" onClick={() => !busy && setShowProjectDialog(null)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, importProject, Boolean(importArchiveFile) && !busy)}
+            role="dialog"
+          >
             <div className="dialog__title">Import Project</div>
             <input
               placeholder="New project name"
@@ -3936,7 +4120,14 @@ function App() {
 
       {showProjectDialog === 'delete' ? (
         <div className="dialog-backdrop" onClick={() => setShowProjectDialog(null)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) =>
+              handleDialogEnter(event, deleteProject, deleteProjectText === tree?.project?.name && !busy)
+            }
+            role="dialog"
+          >
             <div className="dialog__title">Delete Project</div>
             <div className="inspector__notice">
               Type <strong>{tree?.project?.name}</strong> to permanently delete this project.
@@ -3966,10 +4157,19 @@ function App() {
 
       {deleteNodeOpen ? (
         <div className="dialog-backdrop" onClick={() => setDeleteNodeOpen(false)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, deleteNode, !busy)}
+            role="dialog"
+          >
             <div className="dialog__title">Delete Node</div>
             <div className="inspector__notice">
-              Delete <strong>{selectedNode?.name}</strong> and all child nodes?
+              {hasBulkSelection ? (
+                <>Delete <strong>{bulkSelectionCount} selected nodes</strong> and all child nodes?</>
+              ) : (
+                <>Delete <strong>{selectedNode?.name}</strong> and all child nodes?</>
+              )}
             </div>
             <div className="dialog__actions">
               <button className="ghost-button" onClick={() => setDeleteNodeOpen(false)} type="button">
@@ -3985,7 +4185,12 @@ function App() {
 
       {sessionDialogOpen ? (
         <div className="dialog-backdrop" onClick={() => setSessionDialogOpen(false)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, () => setSessionDialogOpen(false))}
+            role="dialog"
+          >
             <div className="dialog__title">Mobile Capture</div>
             <div className="inspector__notice">
               Enter this session code on your phone to connect capture directly to this desktop session.

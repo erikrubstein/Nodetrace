@@ -321,6 +321,12 @@ select {
     inset 0 0 0 1px var(--inner-stroke);
 }
 
+.graph-node.selected-secondary .graph-node__visual {
+  box-shadow:
+    0 0 0 3px var(--selected),
+    inset 0 0 0 1px var(--inner-stroke);
+}
+
 .graph-node.drop-target .graph-node__visual {
   box-shadow:
     0 0 0 3px var(--selected),
