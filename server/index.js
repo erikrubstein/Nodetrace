@@ -36,6 +36,7 @@ const defaultProjectSettings = {
   horizontalGap: 72,
   verticalGap: 44,
   imageMode: 'square',
+  layoutMode: 'compact',
 }
 
 function generateShortId() {
@@ -596,6 +597,7 @@ function normalizeProjectSettings(settingsInput) {
 
   settings.orientation = settings.orientation === 'vertical' ? 'vertical' : 'horizontal'
   settings.imageMode = settings.imageMode === 'square' ? 'square' : 'original'
+  settings.layoutMode = settings.layoutMode === 'classic' ? 'classic' : 'compact'
   settings.horizontalGap = Math.max(24, Math.min(220, Number(settings.horizontalGap) || defaultProjectSettings.horizontalGap))
   settings.verticalGap = Math.max(16, Math.min(180, Number(settings.verticalGap) || defaultProjectSettings.verticalGap))
 
