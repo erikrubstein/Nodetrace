@@ -26,6 +26,9 @@ fs.mkdirSync(path.join(tempDir, 'imports'), { recursive: true })
 const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
 
+const ID_FIRST_CHARS = 'abcdefghijklmnopqrstuvwxyz'
+const ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
+
 const defaultProjectSettings = {
   orientation: 'horizontal',
   horizontalGap: 72,
@@ -33,64 +36,231 @@ const defaultProjectSettings = {
   imageMode: 'square',
 }
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS projects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    settings_json TEXT DEFAULT '{}',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS nodes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER NOT NULL,
-    parent_id INTEGER,
-    variant_of_id INTEGER,
-    type TEXT NOT NULL CHECK(type IN ('folder', 'photo')),
-    name TEXT NOT NULL,
-    notes TEXT DEFAULT '',
-    tags_json TEXT DEFAULT '[]',
-    collapsed INTEGER DEFAULT 0,
-    image_path TEXT,
-    preview_path TEXT,
-    original_filename TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY(project_id) REFERENCES projects(id),
-    FOREIGN KEY(parent_id) REFERENCES nodes(id),
-    FOREIGN KEY(variant_of_id) REFERENCES nodes(id)
-  );
-`)
-
-const projectColumns = db.prepare(`PRAGMA table_info(projects)`).all()
-if (!projectColumns.some((column) => column.name === 'settings_json')) {
-  db.exec(`ALTER TABLE projects ADD COLUMN settings_json TEXT DEFAULT '{}'`)
+function generateShortId() {
+  let value = ID_FIRST_CHARS[Math.floor(Math.random() * ID_FIRST_CHARS.length)]
+  for (let index = 1; index < 5; index += 1) {
+    value += ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)]
+  }
+  return value
 }
 
-const nodeColumns = db.prepare(`PRAGMA table_info(nodes)`).all()
-if (!nodeColumns.some((column) => column.name === 'preview_path')) {
-  db.exec(`ALTER TABLE nodes ADD COLUMN preview_path TEXT`)
+function generateUniqueId(lookup) {
+  let attempts = 0
+  while (attempts < 200) {
+    const candidate = generateShortId()
+    if (!lookup(candidate)) {
+      return candidate
+    }
+    attempts += 1
+  }
+
+  throw new Error('Unable to generate a unique short id')
 }
-if (!nodeColumns.some((column) => column.name === 'collapsed')) {
-  db.exec(`ALTER TABLE nodes ADD COLUMN collapsed INTEGER DEFAULT 0`)
+
+function createTextSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      settings_json TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS nodes (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      parent_id TEXT,
+      variant_of_id TEXT,
+      type TEXT NOT NULL CHECK(type IN ('folder', 'photo')),
+      name TEXT NOT NULL,
+      notes TEXT DEFAULT '',
+      tags_json TEXT DEFAULT '[]',
+      collapsed INTEGER DEFAULT 0,
+      image_path TEXT,
+      preview_path TEXT,
+      original_filename TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id),
+      FOREIGN KEY(parent_id) REFERENCES nodes(id),
+      FOREIGN KEY(variant_of_id) REFERENCES nodes(id)
+    );
+  `)
 }
-if (!nodeColumns.some((column) => column.name === 'variant_of_id')) {
-  db.exec(`ALTER TABLE nodes ADD COLUMN variant_of_id INTEGER`)
+
+function ensureTextIdSchema() {
+  const hasProjects = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'`).get()
+  const hasNodes = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'nodes'`).get()
+
+  if (!hasProjects && !hasNodes) {
+    createTextSchema()
+    return
+  }
+
+  const projectColumns = db.prepare(`PRAGMA table_info(projects)`).all()
+  const nodeColumns = db.prepare(`PRAGMA table_info(nodes)`).all()
+  const projectIdType = String(projectColumns.find((column) => column.name === 'id')?.type || '').toUpperCase()
+  const nodeProjectIdType = String(nodeColumns.find((column) => column.name === 'project_id')?.type || '').toUpperCase()
+  const legacySchema =
+    projectIdType.includes('INT') ||
+    nodeProjectIdType.includes('INT') ||
+    projectColumns.some((column) => column.name === 'public_id') ||
+    nodeColumns.some((column) => column.name === 'public_id')
+
+  if (!legacySchema) {
+    return
+  }
+
+  if (!projectColumns.some((column) => column.name === 'public_id')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN public_id TEXT`)
+  }
+  if (!projectColumns.some((column) => column.name === 'settings_json')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN settings_json TEXT DEFAULT '{}'`)
+  }
+  if (!nodeColumns.some((column) => column.name === 'public_id')) {
+    db.exec(`ALTER TABLE nodes ADD COLUMN public_id TEXT`)
+  }
+  if (!nodeColumns.some((column) => column.name === 'preview_path')) {
+    db.exec(`ALTER TABLE nodes ADD COLUMN preview_path TEXT`)
+  }
+  if (!nodeColumns.some((column) => column.name === 'collapsed')) {
+    db.exec(`ALTER TABLE nodes ADD COLUMN collapsed INTEGER DEFAULT 0`)
+  }
+  if (!nodeColumns.some((column) => column.name === 'variant_of_id')) {
+    db.exec(`ALTER TABLE nodes ADD COLUMN variant_of_id INTEGER`)
+  }
+
+  const legacyProjects = db.prepare(`SELECT * FROM projects`).all()
+  const legacyNodes = db.prepare(`SELECT * FROM nodes`).all()
+  const isValidPublicId = (value) => typeof value === 'string' && /^[a-z][a-z0-9]{4}$/i.test(value)
+
+  const usedProjectIds = new Set()
+  const projectIdMap = new Map()
+  for (const row of legacyProjects) {
+    const publicId = isValidPublicId(row.public_id)
+      ? row.public_id
+      : generateUniqueId((candidate) => usedProjectIds.has(candidate))
+    usedProjectIds.add(publicId)
+    projectIdMap.set(row.id, publicId)
+  }
+
+  const usedNodeIds = new Set()
+  const nodeIdMap = new Map()
+  for (const row of legacyNodes) {
+    const publicId = isValidPublicId(row.public_id)
+      ? row.public_id
+      : generateUniqueId((candidate) => usedNodeIds.has(candidate))
+    usedNodeIds.add(publicId)
+    nodeIdMap.set(row.id, publicId)
+  }
+
+  const migrate = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE projects_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        settings_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE nodes_new (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        parent_id TEXT,
+        variant_of_id TEXT,
+        type TEXT NOT NULL CHECK(type IN ('folder', 'photo')),
+        name TEXT NOT NULL,
+        notes TEXT DEFAULT '',
+        tags_json TEXT DEFAULT '[]',
+        collapsed INTEGER DEFAULT 0,
+        image_path TEXT,
+        preview_path TEXT,
+        original_filename TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(project_id) REFERENCES projects_new(id),
+        FOREIGN KEY(parent_id) REFERENCES nodes_new(id),
+        FOREIGN KEY(variant_of_id) REFERENCES nodes_new(id)
+      );
+    `)
+
+    const insertProjectRow = db.prepare(`
+      INSERT INTO projects_new (id, name, description, settings_json, created_at, updated_at)
+      VALUES (@id, @name, @description, @settings_json, @created_at, @updated_at)
+    `)
+    const insertNodeRow = db.prepare(`
+      INSERT INTO nodes_new (
+        id, project_id, parent_id, variant_of_id, type, name, notes, tags_json, collapsed,
+        image_path, preview_path, original_filename, created_at, updated_at
+      ) VALUES (
+        @id, @project_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json, @collapsed,
+        @image_path, @preview_path, @original_filename, @created_at, @updated_at
+      )
+    `)
+
+    for (const row of legacyProjects) {
+      insertProjectRow.run({
+        id: projectIdMap.get(row.id),
+        name: row.name,
+        description: row.description || '',
+        settings_json: row.settings_json || '{}',
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      })
+    }
+
+    for (const row of legacyNodes) {
+      insertNodeRow.run({
+        id: nodeIdMap.get(row.id),
+        project_id: projectIdMap.get(row.project_id),
+        parent_id: row.parent_id != null ? nodeIdMap.get(row.parent_id) : null,
+        variant_of_id: row.variant_of_id != null ? nodeIdMap.get(row.variant_of_id) : null,
+        type: row.type,
+        name: row.name,
+        notes: row.notes || '',
+        tags_json: row.tags_json || '[]',
+        collapsed: row.collapsed ? 1 : 0,
+        image_path: row.image_path || null,
+        preview_path: row.preview_path || null,
+        original_filename: row.original_filename || null,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      })
+    }
+
+    db.exec(`
+      DROP TABLE nodes;
+      DROP TABLE projects;
+      ALTER TABLE projects_new RENAME TO projects;
+      ALTER TABLE nodes_new RENAME TO nodes;
+    `)
+  })
+
+  db.exec(`PRAGMA foreign_keys = OFF`)
+  try {
+    migrate()
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ON`)
+  }
 }
+
+ensureTextIdSchema()
 
 const insertProject = db.prepare(`
-  INSERT INTO projects (name, description, settings_json, created_at, updated_at)
-  VALUES (@name, @description, @settings_json, @created_at, @updated_at)
+  INSERT INTO projects (id, name, description, settings_json, created_at, updated_at)
+  VALUES (@id, @name, @description, @settings_json, @created_at, @updated_at)
 `)
 
 const insertNode = db.prepare(`
   INSERT INTO nodes (
-    project_id, parent_id, variant_of_id, type, name, notes, tags_json, image_path, preview_path,
+    id, project_id, parent_id, variant_of_id, type, name, notes, tags_json, image_path, preview_path,
     original_filename, created_at, updated_at
   ) VALUES (
-    @project_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json, @image_path, @preview_path,
+    @id, @project_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json, @image_path, @preview_path,
     @original_filename, @created_at, @updated_at
   )
 `)
@@ -109,7 +279,7 @@ const getProjectNodes = db.prepare(`
   SELECT *
   FROM nodes
   WHERE project_id = ?
-  ORDER BY COALESCE(parent_id, 0), type, name, id
+  ORDER BY COALESCE(parent_id, ''), type, name, id
 `)
 const deleteProjectStmt = db.prepare(`DELETE FROM projects WHERE id = ?`)
 const deleteNodesByProjectStmt = db.prepare(`DELETE FROM nodes WHERE project_id = ?`)
@@ -169,7 +339,9 @@ const deleteNodeStmt = db.prepare(`DELETE FROM nodes WHERE id = ?`)
 
 const createProjectWithRoot = db.transaction(({ name, description }) => {
   const now = new Date().toISOString()
-  const projectResult = insertProject.run({
+  const projectId = generateUniqueId((candidate) => Boolean(getProject.get(candidate)))
+  insertProject.run({
+    id: projectId,
     name,
     description,
     settings_json: JSON.stringify(defaultProjectSettings),
@@ -178,7 +350,8 @@ const createProjectWithRoot = db.transaction(({ name, description }) => {
   })
 
   insertNode.run({
-    project_id: projectResult.lastInsertRowid,
+    id: generateUniqueId((candidate) => Boolean(getNode.get(candidate))),
+    project_id: projectId,
     parent_id: null,
     type: 'folder',
     name,
@@ -192,7 +365,7 @@ const createProjectWithRoot = db.transaction(({ name, description }) => {
     updated_at: now,
   })
 
-  return projectResult.lastInsertRowid
+  return projectId
 })
 
 const updateProjectSettings = db.transaction(({ id, settings }) => {
@@ -206,7 +379,9 @@ const updateProjectSettings = db.transaction(({ id, settings }) => {
 
 const createNode = db.transaction((payload) => {
   const now = new Date().toISOString()
-  const result = insertNode.run({
+  const nodeId = payload.id || generateUniqueId((candidate) => Boolean(getNode.get(candidate)))
+  insertNode.run({
+    id: nodeId,
     ...payload,
     created_at: now,
     updated_at: now,
@@ -215,7 +390,7 @@ const createNode = db.transaction((payload) => {
   })
 
   updateProjectTimestamp.run(now, payload.project_id)
-  return result.lastInsertRowid
+  return nodeId
 })
 
 const updateNode = db.transaction(({ id, project_id, name, notes, tags, collapsed }) => {
@@ -414,14 +589,26 @@ function normalizeProjectSettings(settingsInput) {
 
 function serializeProject(row) {
   return {
-    ...row,
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
     settings: normalizeProjectSettings(JSON.parse(row.settings_json || '{}')),
   }
 }
 
 function serializeNode(row) {
   return {
-    ...row,
+    id: row.id,
+    parent_id: row.parent_id,
+    variant_of_id: row.variant_of_id,
+    type: row.type,
+    name: row.name,
+    notes: row.notes,
+    original_filename: row.original_filename,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
     tags: JSON.parse(row.tags_json || '[]'),
     collapsed: Boolean(row.collapsed),
     isVariant: row.variant_of_id != null,
@@ -432,7 +619,7 @@ function serializeNode(row) {
 }
 
 function buildTree(project, rows) {
-  const nodes = rows.map(serializeNode)
+  const nodes = rows.map((row) => serializeNode(row))
   const byId = new Map(nodes.map((node) => [node.id, { ...node, children: [], variants: [] }]))
   let root = null
 
@@ -464,7 +651,7 @@ function buildTree(project, rows) {
 }
 
 function assertProject(projectId) {
-  const project = getProject.get(projectId)
+  const project = getProject.get(String(projectId || '').trim())
   if (!project) {
     const error = new Error('Project not found')
     error.status = 404
@@ -474,7 +661,7 @@ function assertProject(projectId) {
 }
 
 function assertNode(nodeId) {
-  const node = getNode.get(nodeId)
+  const node = getNode.get(String(nodeId || '').trim())
   if (!node) {
     const error = new Error('Node not found')
     error.status = 404
@@ -631,9 +818,9 @@ function writeProjectManifest(project, rows, workDir) {
       }
 
       return {
-        old_id: row.id,
-        parent_old_id: row.parent_id,
-        variant_of_old_id: row.variant_of_id,
+        id: row.id,
+        parent_id: row.parent_id,
+        variant_of_id: row.variant_of_id,
         type: row.type,
         name: row.name,
         notes: row.notes || '',
@@ -663,7 +850,7 @@ function restoreProjectFromArchive(projectId, archivePath) {
 
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
     const importedRows = Array.isArray(manifest.nodes) ? manifest.nodes : []
-    const rootRow = importedRows.find((node) => node.parent_old_id == null && node.variant_of_old_id == null)
+    const rootRow = importedRows.find((node) => (node.parent_id ?? node.parent_old_id) == null && (node.variant_of_id ?? node.variant_of_old_id) == null)
     if (!rootRow) {
       const error = new Error('Invalid project archive: root node missing')
       error.status = 400
@@ -681,7 +868,9 @@ function restoreProjectFromArchive(projectId, archivePath) {
       updated_at: now,
     })
 
-    const rootInsert = insertNode.run({
+    const rootId = generateUniqueId((candidate) => Boolean(getNode.get(candidate)))
+    insertNode.run({
+      id: rootId,
       project_id: projectId,
       parent_id: null,
       variant_of_id: null,
@@ -698,7 +887,7 @@ function restoreProjectFromArchive(projectId, archivePath) {
 
     if (rootRow.collapsed) {
       updateNode({
-        id: rootInsert.lastInsertRowid,
+        id: rootId,
         project_id: projectId,
         name: rootRow.name || 'Root',
         notes: rootRow.notes || '',
@@ -707,19 +896,23 @@ function restoreProjectFromArchive(projectId, archivePath) {
       })
     }
 
-    const oldToNew = new Map([[rootRow.old_id, rootInsert.lastInsertRowid]])
-    const pendingRows = importedRows.filter((row) => row.old_id !== rootRow.old_id)
+    const rootManifestId = String(rootRow.id ?? rootRow.old_id)
+    const oldToNew = new Map([[rootManifestId, rootId]])
+    const pendingRows = importedRows.filter((row) => String(row.id ?? row.old_id) !== rootManifestId)
 
     while (pendingRows.length > 0) {
       let importedCount = 0
 
       for (let index = pendingRows.length - 1; index >= 0; index -= 1) {
         const row = pendingRows[index]
-        const parentId = row.parent_old_id != null ? oldToNew.get(row.parent_old_id) : null
-        const variantOfId = row.variant_of_old_id != null ? oldToNew.get(row.variant_of_old_id) : null
+        const rowId = String(row.id ?? row.old_id)
+        const parentRef = row.parent_id ?? row.parent_old_id ?? null
+        const variantRef = row.variant_of_id ?? row.variant_of_old_id ?? null
+        const parentId = parentRef != null ? oldToNew.get(String(parentRef)) : null
+        const variantOfId = variantRef != null ? oldToNew.get(String(variantRef)) : null
         if (
-          (row.parent_old_id != null && !parentId) ||
-          (row.variant_of_old_id != null && !variantOfId)
+          (parentRef != null && !parentId) ||
+          (variantRef != null && !variantOfId)
         ) {
           continue
         }
@@ -765,7 +958,7 @@ function restoreProjectFromArchive(projectId, archivePath) {
           })
         }
 
-        oldToNew.set(row.old_id, nodeId)
+        oldToNew.set(rowId, nodeId)
         pendingRows.splice(index, 1)
         importedCount += 1
       }
@@ -788,7 +981,8 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
   assertProject(projectId)
 
   const rows = Array.isArray(manifest?.nodes) ? manifest.nodes : []
-  const rootRow = rows.find((row) => row.id === manifest.root_id)
+  const manifestRootId = String(manifest.root_id)
+  const rootRow = rows.find((row) => String(row.id ?? row.old_id) === manifestRootId)
   if (!rootRow) {
     const error = new Error('Invalid subtree payload: root node missing')
     error.status = 400
@@ -804,22 +998,23 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
 
     for (let index = pendingRows.length - 1; index >= 0; index -= 1) {
       const row = pendingRows[index]
-      const isRoot = row.id === manifest.root_id
+      const rowId = String(row.id ?? row.old_id)
+      const isRoot = rowId === manifestRootId
       const parentId = isRoot
         ? manifest.root_parent_id
-        : row.parent_old_id != null
-          ? oldToNew.get(row.parent_old_id)
+        : row.parent_id != null || row.parent_old_id != null
+          ? oldToNew.get(String(row.parent_id ?? row.parent_old_id))
           : null
       const variantOfId = isRoot
         ? manifest.root_variant_of_id
-        : row.variant_of_old_id != null
-          ? oldToNew.get(row.variant_of_old_id)
+        : row.variant_of_id != null || row.variant_of_old_id != null
+          ? oldToNew.get(String(row.variant_of_id ?? row.variant_of_old_id))
           : null
 
-      if (!isRoot && row.parent_old_id != null && !parentId) {
+      if (!isRoot && (row.parent_id != null || row.parent_old_id != null) && !parentId) {
         continue
       }
-      if (!isRoot && row.variant_of_old_id != null && !variantOfId) {
+      if (!isRoot && (row.variant_of_id != null || row.variant_of_old_id != null) && !variantOfId) {
         continue
       }
 
@@ -870,7 +1065,7 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
         })
       }
 
-      oldToNew.set(row.id, nodeId)
+      oldToNew.set(rowId, nodeId)
       pendingRows.splice(index, 1)
       importedCount += 1
     }
@@ -882,7 +1077,7 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
     }
   }
 
-  return serializeNode(assertNode(oldToNew.get(manifest.root_id)))
+  return serializeNode(assertNode(oldToNew.get(manifestRootId)))
 }
 
 function importProjectArchive(archivePath, projectNameOverride = '') {
@@ -917,7 +1112,7 @@ function importProjectArchive(archivePath, projectNameOverride = '') {
     const importedRows = Array.isArray(manifest.nodes) ? manifest.nodes : []
     const oldToNew = new Map()
     const createdRoot = getProjectNodes.all(projectId).find((node) => node.parent_id == null)
-    const rootRow = importedRows.find((node) => node.parent_old_id == null)
+    const rootRow = importedRows.find((node) => (node.parent_id ?? node.parent_old_id) == null)
 
     if (!createdRoot || !rootRow) {
       const error = new Error('Invalid project archive: root node missing')
@@ -933,23 +1128,27 @@ function importProjectArchive(archivePath, projectNameOverride = '') {
       tags: Array.isArray(rootRow.tags) ? rootRow.tags : [],
       collapsed: rootRow.collapsed ? 1 : 0,
     })
-    oldToNew.set(rootRow.old_id, createdRoot.id)
+    const rootManifestId = String(rootRow.id ?? rootRow.old_id)
+    oldToNew.set(rootManifestId, createdRoot.id)
 
     const projectUploadDir = path.join(uploadsDir, String(projectId))
     fs.mkdirSync(projectUploadDir, { recursive: true })
 
-    const pendingRows = importedRows.filter((row) => row.old_id !== rootRow.old_id)
+    const pendingRows = importedRows.filter((row) => String(row.id ?? row.old_id) !== rootManifestId)
     while (pendingRows.length > 0) {
       let importedCount = 0
 
       for (let index = pendingRows.length - 1; index >= 0; index -= 1) {
         const row = pendingRows[index]
-        const parentId = row.parent_old_id != null ? oldToNew.get(row.parent_old_id) : null
+        const parentId =
+          row.parent_id != null || row.parent_old_id != null
+            ? oldToNew.get(String(row.parent_id ?? row.parent_old_id))
+            : null
         const variantOfId =
-          row.variant_of_old_id != null ? oldToNew.get(row.variant_of_old_id) : null
+          row.variant_of_id != null || row.variant_of_old_id != null ? oldToNew.get(String(row.variant_of_id ?? row.variant_of_old_id)) : null
         if (
-          (row.parent_old_id != null && !parentId) ||
-          (row.variant_of_old_id != null && !variantOfId)
+          ((row.parent_id != null || row.parent_old_id != null) && !parentId) ||
+          ((row.variant_of_id != null || row.variant_of_old_id != null) && !variantOfId)
         ) {
           continue
         }
@@ -995,15 +1194,15 @@ function importProjectArchive(archivePath, projectNameOverride = '') {
           })
         }
 
-        oldToNew.set(row.old_id, nodeId)
+        oldToNew.set(String(row.id ?? row.old_id), nodeId)
         pendingRows.splice(index, 1)
         importedCount += 1
       }
 
       if (importedCount === 0) {
         const unresolvedParents = pendingRows.slice(0, 5).map((row) => ({
-          node: row.name || row.old_id,
-          missingParentOldId: row.parent_old_id,
+          node: row.name || row.id || row.old_id,
+          missingParentId: row.parent_id ?? row.parent_old_id,
         }))
         const error = new Error(
           `Invalid project archive: unable to resolve parent links for ${pendingRows.length} node(s)`,
@@ -1103,8 +1302,8 @@ app.post('/api/projects', (req, res, next) => {
 
 app.get('/api/projects/:id/tree', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    const project = assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
     const tree = buildTree(project, getProjectNodes.all(projectId))
     res.json(tree)
   } catch (error) {
@@ -1114,8 +1313,8 @@ app.get('/api/projects/:id/tree', (req, res, next) => {
 
 app.get('/api/projects/:id/clients', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
 
     const clients = cleanupProjectClients(projectId).sort((a, b) => a.name.localeCompare(b.name))
     res.json(
@@ -1133,12 +1332,12 @@ app.get('/api/projects/:id/clients', (req, res, next) => {
 
 app.patch('/api/projects/:id/clients/:clientId', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
 
     const clientId = String(req.params.clientId || '').trim()
     const name = String(req.body.name || '').trim()
-    const selectedNodeId = Number(req.body.selectedNodeId)
+    const selectedNodeId = String(req.body.selectedNodeId || '').trim()
     const selectedNode = assertNode(selectedNodeId)
     ensureNodeBelongsToProject(selectedNode, projectId)
 
@@ -1160,8 +1359,8 @@ app.patch('/api/projects/:id/clients/:clientId', (req, res, next) => {
 
 app.get('/api/projects/:id/events', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
 
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache, no-transform')
@@ -1194,8 +1393,8 @@ app.get('/api/projects/:id/events', (req, res, next) => {
 
 app.patch('/api/projects/:id/settings', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    const project = assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
     const currentSettings = normalizeProjectSettings(JSON.parse(project.settings_json || '{}'))
     const nextSettings = normalizeProjectSettings({
       ...currentSettings,
@@ -1216,8 +1415,8 @@ app.patch('/api/projects/:id/settings', (req, res, next) => {
 
 app.post('/api/projects/:id/collapse-all', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
     const collapsed = Boolean(req.body?.collapsed)
     const updatedIds = setProjectCollapsedState({ projectId, collapsed: collapsed ? 1 : 0 })
     broadcastProjectEvent(projectId)
@@ -1229,7 +1428,8 @@ app.post('/api/projects/:id/collapse-all', (req, res, next) => {
 
 app.delete('/api/projects/:id', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
     broadcastProjectEvent(projectId, { type: 'project-deleted' })
     activeDesktopClients.delete(projectId)
     deleteProjectRecursive(projectId)
@@ -1243,9 +1443,9 @@ app.get('/api/projects/:id/export', (req, res, next) => {
   let archivePath = null
 
   try {
-    const projectId = Number(req.params.id)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
     archivePath = exportProjectArchive(projectId)
-    const project = assertProject(projectId)
     const safeName = project.name.replace(/[^a-zA-Z0-9._-]/g, '_') || `project-${projectId}`
     res.download(archivePath, `${safeName}.zip`, (downloadError) => {
       if (archivePath && fs.existsSync(archivePath)) {
@@ -1267,7 +1467,8 @@ app.get('/api/projects/:id/snapshot', (req, res, next) => {
   let archivePath = null
 
   try {
-    const projectId = Number(req.params.id)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
     archivePath = exportProjectArchive(projectId)
     res.type('application/zip')
     res.sendFile(archivePath, (sendError) => {
@@ -1313,8 +1514,8 @@ app.post('/api/projects/import', importUpload.single('archive'), (req, res, next
 
 app.post('/api/projects/:id/restore', importUpload.single('archive'), (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
 
     if (!req.file) {
       return res.status(400).json({ error: 'Project archive is required' })
@@ -1342,12 +1543,12 @@ app.post('/api/projects/:id/restore', importUpload.single('archive'), (req, res,
 
 app.post('/api/projects/:id/folders', (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
 
     const clientId = String(req.body.clientId || '').trim()
-    let parentId = Number(req.body.parentId)
-    if ((!parentId || Number.isNaN(parentId)) && clientId) {
+    let parentId = String(req.body.parentId || '').trim() || null
+    if (!parentId && clientId) {
       const clients = cleanupProjectClients(projectId)
       const controllingClient = clients.find((client) => client.id === clientId)
       if (!controllingClient) {
@@ -1367,7 +1568,7 @@ app.post('/api/projects/:id/folders', (req, res, next) => {
 
     const nodeId = createNode({
       project_id: projectId,
-      parent_id: parentId,
+      parent_id: parentNode.id,
       variant_of_id: null,
       type: 'folder',
       name,
@@ -1387,14 +1588,14 @@ app.post('/api/projects/:id/folders', (req, res, next) => {
 
 app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'preview', maxCount: 1 }]), (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
 
     const clientId = String(req.body.clientId || '').trim()
     const variantRequested = String(req.body.variant || '').trim() === 'true'
-    let parentId = Number(req.body.parentId)
-    let variantOfId = req.body.variantOfId != null ? Number(req.body.variantOfId) : null
-    if ((!parentId || Number.isNaN(parentId)) && clientId) {
+    let parentId = String(req.body.parentId || '').trim() || null
+    let variantOfId = req.body.variantOfId != null ? String(req.body.variantOfId).trim() : null
+    if (!parentId && clientId) {
       const clients = cleanupProjectClients(projectId)
       const controllingClient = clients.find((client) => client.id === clientId)
       if (!controllingClient) {
@@ -1407,8 +1608,8 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
       }
     }
 
-    if (variantRequested || (variantOfId != null && !Number.isNaN(variantOfId))) {
-      const rawAnchorNode = assertNode(Number(variantOfId))
+    if (variantRequested || variantOfId) {
+      const rawAnchorNode = assertNode(variantOfId)
       ensureNodeBelongsToProject(rawAnchorNode, projectId)
       const anchorNode = resolveVariantAnchor(rawAnchorNode)
       parentId = anchorNode.parent_id
@@ -1435,7 +1636,7 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
       requestedName && requestedName !== '<untitled>' ? requestedName : createUntitledName(projectId)
     const nodeId = createNode({
       project_id: projectId,
-      parent_id: parentId,
+      parent_id: parentNode?.id ?? null,
       variant_of_id: variantOfId,
       type: 'photo',
       name: resolvedName,
@@ -1455,8 +1656,8 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
 
 app.post('/api/projects/:id/subtree-restore', restoreUpload.any(), (req, res, next) => {
   try {
-    const projectId = Number(req.params.id)
-    assertProject(projectId)
+    const project = assertProject(req.params.id)
+    const projectId = project.id
     const manifest = JSON.parse(String(req.body.manifest || '{}'))
     const restoredRoot = restoreSubtreeFromPayload(projectId, manifest, req.files || [])
     broadcastProjectEvent(projectId)
@@ -1468,11 +1669,10 @@ app.post('/api/projects/:id/subtree-restore', restoreUpload.any(), (req, res, ne
 
 app.patch('/api/nodes/:id', (req, res, next) => {
   try {
-    const nodeId = Number(req.params.id)
-    const node = assertNode(nodeId)
+    const node = assertNode(req.params.id)
 
     updateNode({
-      id: nodeId,
+      id: node.id,
       project_id: node.project_id,
       name: String(req.body.name || '').trim() || node.name,
       notes: String(req.body.notes || '').trim(),
@@ -1481,7 +1681,7 @@ app.patch('/api/nodes/:id', (req, res, next) => {
     })
 
     broadcastProjectEvent(node.project_id)
-    res.json(serializeNode(assertNode(nodeId)))
+    res.json(serializeNode(assertNode(node.id)))
   } catch (error) {
     next(error)
   }
@@ -1489,17 +1689,16 @@ app.patch('/api/nodes/:id', (req, res, next) => {
 
 app.post('/api/nodes/:id/collapse', (req, res, next) => {
   try {
-    const nodeId = Number(req.params.id)
-    const node = assertNode(nodeId)
+    const node = assertNode(req.params.id)
     const collapsed = req.body.collapsed ? 1 : 0
     const updatedIds = setNodeCollapsedStateRecursive({
-      nodeId,
+      nodeId: node.id,
       projectId: node.project_id,
       collapsed,
     })
 
     broadcastProjectEvent(node.project_id)
-    res.json({ node: serializeNode(assertNode(nodeId)), updatedIds })
+    res.json({ node: serializeNode(assertNode(node.id)), updatedIds })
   } catch (error) {
     next(error)
   }
@@ -1507,46 +1706,45 @@ app.post('/api/nodes/:id/collapse', (req, res, next) => {
 
 app.post('/api/nodes/:id/move', (req, res, next) => {
   try {
-    const nodeId = Number(req.params.id)
-    const node = assertNode(nodeId)
+    const node = assertNode(req.params.id)
     ensureNotRoot(node)
-    const variantOfId = req.body.variantOfId != null ? Number(req.body.variantOfId) : null
-    let parentId = req.body.parentId != null ? Number(req.body.parentId) : null
+    const variantOfId = req.body.variantOfId != null ? String(req.body.variantOfId).trim() : null
+    let parentId = req.body.parentId != null ? String(req.body.parentId).trim() : null
 
-    if (variantOfId != null && !Number.isNaN(variantOfId)) {
+    if (variantOfId) {
       ensureNoChildren(node)
       const requestedAnchor = assertNode(variantOfId)
       ensureNodeBelongsToProject(requestedAnchor, node.project_id)
       const anchorNode = resolveVariantAnchor(requestedAnchor)
-      if (anchorNode.id === nodeId) {
+      if (anchorNode.id === node.id) {
         return res.status(400).json({ error: 'A node cannot be a variant of itself' })
       }
       parentId = anchorNode.parent_id
       moveNode({
-        id: nodeId,
+        id: node.id,
         project_id: node.project_id,
         parent_id: parentId,
         variant_of_id: anchorNode.id,
       })
     } else {
-      if (parentId == null || Number.isNaN(parentId)) {
+      if (!parentId) {
         return res.status(400).json({ error: 'Parent node is required' })
       }
       const targetParent = assertNode(parentId)
       ensureNodeBelongsToProject(targetParent, node.project_id)
       ensureCanHaveChildren(targetParent)
-      ensureNoCycle(nodeId, parentId)
+      ensureNoCycle(node.id, targetParent.id)
 
       moveNode({
-        id: nodeId,
+        id: node.id,
         project_id: node.project_id,
-        parent_id: parentId,
+        parent_id: targetParent.id,
         variant_of_id: null,
       })
     }
 
     broadcastProjectEvent(node.project_id)
-    res.json(serializeNode(assertNode(nodeId)))
+    res.json(serializeNode(assertNode(node.id)))
   } catch (error) {
     next(error)
   }
@@ -1554,10 +1752,9 @@ app.post('/api/nodes/:id/move', (req, res, next) => {
 
 app.delete('/api/nodes/:id', (req, res, next) => {
   try {
-    const nodeId = Number(req.params.id)
-    const node = assertNode(nodeId)
+    const node = assertNode(req.params.id)
     ensureNotRoot(node)
-    deleteNodeRecursive(nodeId, node.project_id)
+    deleteNodeRecursive(node.id, node.project_id)
     broadcastProjectEvent(node.project_id)
     res.status(204).send()
   } catch (error) {

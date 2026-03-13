@@ -15,11 +15,11 @@ const defaultProjectSettings = {
 
 function getUrlState() {
   const params = new URLSearchParams(window.location.search)
-  const projectId = Number(params.get('project'))
-  const nodeId = Number(params.get('node'))
+  const projectId = String(params.get('project') || '').trim() || null
+  const nodeId = String(params.get('node') || '').trim() || null
   return {
-    projectId: Number.isFinite(projectId) && projectId > 0 ? projectId : null,
-    nodeId: Number.isFinite(nodeId) && nodeId > 0 ? nodeId : null,
+    projectId,
+    nodeId,
   }
 }
 
@@ -1250,8 +1250,8 @@ function App() {
 
       nodes.push({
         id: current.id,
-        parent_old_id: current.childrenParentOverride ?? current.parent_id,
-        variant_of_old_id: current.variant_of_id,
+        parent_id: current.childrenParentOverride ?? current.parent_id,
+        variant_of_id: current.variant_of_id,
         type: current.type,
         name: current.name,
         notes: current.notes || '',
@@ -2164,9 +2164,9 @@ function App() {
     try {
       const previousPayload =
         node.variant_of_id != null
-          ? { variantOfId: Number(node.variant_of_id) }
-          : { parentId: Number(node.parent_id), variantOfId: null }
-      const nextPayload = { variantOfId: Number(anchorId) }
+          ? { variantOfId: node.variant_of_id }
+          : { parentId: node.parent_id, variantOfId: null }
+      const nextPayload = { variantOfId: anchorId }
 
       const rollbackLocalEvent = beginLocalEventExpectation()
       let updatedNode = null
@@ -2217,8 +2217,8 @@ function App() {
     setError('')
 
     try {
-      const previousPayload = { variantOfId: Number(node.variant_of_id) }
-      const nextPayload = { parentId: Number(node.variant_of_id), variantOfId: null }
+      const previousPayload = { variantOfId: node.variant_of_id }
+      const nextPayload = { parentId: node.variant_of_id, variantOfId: null }
 
       const rollbackLocalEvent = beginLocalEventExpectation()
       let updatedNode = null
@@ -2271,9 +2271,9 @@ function App() {
     try {
       const previousPayload =
         selectedNode.variant_of_id != null
-          ? { variantOfId: Number(selectedNode.variant_of_id) }
-          : { parentId: Number(selectedNode.parent_id), variantOfId: null }
-      const nextPayload = { parentId: Number(parentId), variantOfId: null }
+          ? { variantOfId: selectedNode.variant_of_id }
+          : { parentId: selectedNode.parent_id, variantOfId: null }
+      const nextPayload = { parentId, variantOfId: null }
 
       const rollbackLocalEvent = beginLocalEventExpectation()
       let updatedNode = null
@@ -3623,6 +3623,7 @@ function App() {
                     >
                       Delete Node
                     </button>
+                    <div className="inspector__notice">Node ID: {selectedNode.id}</div>
                   </div>
                 </>
               ) : null}
@@ -3714,6 +3715,7 @@ function App() {
                 <button className="ghost-button" disabled={busy} onClick={resetProjectSettings} type="button">
                   Reset
                 </button>
+                <div className="inspector__notice">Project ID: {tree?.project?.id || 'n/a'}</div>
               </div>
             </aside>
           </>
