@@ -45,3 +45,7 @@ export function PreviewIcon() {
 export function PhoneIcon() {
   return <i aria-hidden="true" className="fa-solid fa-mobile-screen-button" />
 }
+
+export function UserIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-user" />
+}

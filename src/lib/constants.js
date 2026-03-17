@@ -12,3 +12,17 @@ export const defaultProjectSettings = {
   layoutMode: 'compact',
 }
 
+export const defaultUserProjectUi = {
+  theme: 'dark',
+  previewOpen: false,
+  inspectorOpen: true,
+  settingsOpen: false,
+  cameraOpen: false,
+  accountOpen: false,
+  previewWidth: 340,
+  inspectorWidth: 320,
+  settingsWidth: 280,
+  cameraWidth: 360,
+  accountWidth: 300,
+}
+

@@ -1,10 +1,12 @@
 import { useCallback, useEffect } from 'react'
-import { api } from '../lib/api'
+import { ApiError, api } from '../lib/api'
 import { getUrlState } from '../lib/urlState'
 
 export default function useProjectSync({
+  captureSessionId,
   clearHistory,
-  desktopClientId,
+  currentUser,
+  onAuthLost,
   pendingLocalEventsRef,
   selectedNode,
   selectedNodeIdRef,
@@ -60,23 +62,77 @@ export default function useProjectSync({
 
   useEffect(() => {
     async function initialize() {
+      if (!currentUser) {
+        setProjects([])
+        setSelectedProjectId(null)
+        setTree(null)
+        setSelectedNodeId(null)
+        return
+      }
+
       try {
         await loadProjects(getUrlState().projectId)
       } catch (loadError) {
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          onAuthLost?.()
+          return
+        }
         setError(loadError.message)
         setStatus('Unable to load projects.')
       }
     }
 
     void initialize()
-  }, [loadProjects, setError, setStatus])
+  }, [currentUser, loadProjects, onAuthLost, setError, setProjects, setSelectedNodeId, setSelectedProjectId, setStatus, setTree])
+
+  useEffect(() => {
+    if (!currentUser) {
+      return undefined
+    }
+
+    let cancelled = false
+
+    async function refreshProjects() {
+      try {
+        await loadProjects(selectedProjectId || getUrlState().projectId)
+      } catch (loadError) {
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          onAuthLost?.()
+          return
+        }
+        if (!cancelled) {
+          setError(loadError.message)
+        }
+      }
+    }
+
+    const handle = window.setInterval(() => {
+      void refreshProjects()
+    }, 5000)
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        void refreshProjects()
+      }
+    }
+
+    window.addEventListener('focus', refreshProjects)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(handle)
+      window.removeEventListener('focus', refreshProjects)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [currentUser, loadProjects, onAuthLost, selectedProjectId, setError])
 
   useEffect(() => {
     clearHistory()
   }, [clearHistory, selectedProjectId])
 
   useEffect(() => {
-    if (!selectedProjectId) {
+    if (!currentUser || !selectedProjectId) {
       return
     }
 
@@ -84,12 +140,16 @@ export default function useProjectSync({
     const preferredNodeId = selectedProjectId === urlState.projectId ? urlState.nodeId : null
 
     loadTree(selectedProjectId, preferredNodeId).catch((loadError) => {
+      if (loadError instanceof ApiError && loadError.status === 401) {
+        onAuthLost?.()
+        return
+      }
       setError(loadError.message)
     })
-  }, [loadTree, selectedProjectId, setError])
+  }, [currentUser, loadTree, onAuthLost, selectedProjectId, setError])
 
   useEffect(() => {
-    if (!selectedProjectId || !selectedNode?.id) {
+    if (!captureSessionId || !selectedProjectId || !selectedNode?.id) {
       return undefined
     }
 
@@ -97,7 +157,7 @@ export default function useProjectSync({
 
     async function publishSelection() {
       try {
-        const payload = await api(`/api/sessions/${desktopClientId}`, {
+        const payload = await api(`/api/sessions/${captureSessionId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -105,8 +165,14 @@ export default function useProjectSync({
             selectedNodeId: selectedNode.id,
           }),
         })
-        setMobileConnectionCount(payload.connectionCount || 0)
+        if (!cancelled) {
+          setMobileConnectionCount(payload.connectionCount || 0)
+        }
       } catch (publishError) {
+        if (publishError instanceof ApiError && publishError.status === 401) {
+          onAuthLost?.()
+          return
+        }
         if (!cancelled) {
           setError(publishError.message)
         }
@@ -120,10 +186,10 @@ export default function useProjectSync({
       cancelled = true
       window.clearInterval(heartbeat)
     }
-  }, [desktopClientId, selectedNode?.id, selectedProjectId, setError, setMobileConnectionCount])
+  }, [captureSessionId, onAuthLost, selectedNode?.id, selectedProjectId, setError, setMobileConnectionCount])
 
   useEffect(() => {
-    if (!desktopClientId || !selectedProjectId) {
+    if (!captureSessionId || !selectedProjectId) {
       setMobileConnectionCount(0)
       return undefined
     }
@@ -132,11 +198,21 @@ export default function useProjectSync({
 
     async function refreshSessionConnections() {
       try {
-        const payload = await api(`/api/sessions/${desktopClientId}`)
+        const payload = await api(`/api/sessions/${captureSessionId}`)
+        if (payload?.ok === false) {
+          if (!cancelled) {
+            setMobileConnectionCount(0)
+          }
+          return
+        }
         if (!cancelled) {
           setMobileConnectionCount(payload.connectionCount || 0)
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          onAuthLost?.()
+          return
+        }
         if (!cancelled) {
           setMobileConnectionCount(0)
         }
@@ -150,10 +226,10 @@ export default function useProjectSync({
       cancelled = true
       window.clearInterval(handle)
     }
-  }, [desktopClientId, selectedProjectId, setMobileConnectionCount])
+  }, [captureSessionId, onAuthLost, selectedProjectId, setMobileConnectionCount])
 
   useEffect(() => {
-    if (selectedProjectId == null) {
+    if (!currentUser || selectedProjectId == null) {
       return undefined
     }
 
@@ -163,6 +239,10 @@ export default function useProjectSync({
 
       if (payload.type === 'project-deleted') {
         loadProjects().catch((loadError) => {
+          if (loadError instanceof ApiError && loadError.status === 401) {
+            onAuthLost?.()
+            return
+          }
           setError(loadError.message)
         })
         return
@@ -174,6 +254,10 @@ export default function useProjectSync({
       }
 
       loadTree(selectedProjectId, selectedNodeIdRef.current).catch((loadError) => {
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          onAuthLost?.()
+          return
+        }
         setError(loadError.message)
       })
     }
@@ -185,7 +269,7 @@ export default function useProjectSync({
     return () => {
       stream.close()
     }
-  }, [loadProjects, loadTree, pendingLocalEventsRef, selectedNodeIdRef, selectedProjectId, setError])
+  }, [currentUser, loadProjects, loadTree, onAuthLost, pendingLocalEventsRef, selectedNodeIdRef, selectedProjectId, setError])
 
   return {
     loadProjects,

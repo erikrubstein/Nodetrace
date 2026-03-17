@@ -1,8 +1,20 @@
+export class ApiError extends Error {
+  constructor(message, status, payload = null) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.payload = payload
+  }
+}
+
 export async function api(url, options = {}) {
-  const response = await fetch(url, options)
+  const response = await fetch(url, {
+    credentials: 'same-origin',
+    ...options,
+  })
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
-    throw new Error(payload.error || 'Request failed')
+    throw new ApiError(payload.error || 'Request failed', response.status, payload)
   }
 
   if (response.status === 204) {
@@ -17,6 +29,7 @@ export function uploadWithProgress(url, formData, onProgress) {
     const request = new XMLHttpRequest()
     request.open('POST', url)
     request.responseType = 'json'
+    request.withCredentials = true
 
     request.upload.onprogress = (event) => {
       if (!event.lengthComputable) {
@@ -33,11 +46,11 @@ export function uploadWithProgress(url, formData, onProgress) {
         return
       }
 
-      reject(new Error(request.response?.error || 'Request failed'))
+      reject(new ApiError(request.response?.error || 'Request failed', request.status, request.response))
     }
 
     request.onerror = () => {
-      reject(new Error('Network request failed'))
+      reject(new ApiError('Network request failed', 0))
     }
 
     request.send(formData)

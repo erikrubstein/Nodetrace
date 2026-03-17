@@ -110,7 +110,13 @@ export default function InspectorPanel({
               >
                 {hasBulkSelection ? `Delete ${bulkSelectionCount} Nodes` : 'Delete Node'}
               </button>
-              <div className="inspector__notice">Node ID: {selectedNode.id}</div>
+            </div>
+
+            <div className="inspector__section inspector__footer">
+              <div className="settings-panel__meta-row">
+                <span>Node ID</span>
+                <strong>{selectedNode.id}</strong>
+              </div>
             </div>
           </>
         ) : null}

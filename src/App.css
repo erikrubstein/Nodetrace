@@ -86,6 +86,86 @@ select {
   overflow: hidden;
 }
 
+.app-shell--auth {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.app-shell--loading {
+  display: grid;
+  place-items: center;
+}
+
+.auth-screen {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-shell {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 14px;
+}
+
+.auth-title {
+  font-size: 1.5rem;
+  text-align: center;
+}
+
+.auth-card {
+  width: 100%;
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 22px;
+  display: grid;
+  gap: 18px;
+}
+
+.auth-error {
+  color: var(--danger);
+}
+
+.inspector__notice.auth-error {
+  color: var(--danger);
+  text-align: center;
+}
+
+.auth-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-column__title {
+  font-size: 0.98rem;
+  text-align: center;
+}
+
+.auth-fields {
+  flex: 1;
+}
+
+.auth-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.auth-switch__link {
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.auth-switch__link:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -571,6 +651,10 @@ select {
   padding: 10px;
 }
 
+.inspector__footer {
+  margin-top: auto;
+}
+
 .inspector__title {
   font-size: 0.72rem;
   text-transform: uppercase;
@@ -610,6 +694,12 @@ select {
 
 .camera-panel {
   overflow: hidden;
+}
+
+.account-panel .primary-button,
+.account-panel .ghost-button,
+.account-panel .danger-button {
+  width: 100%;
 }
 
 .preview-viewport {
@@ -768,7 +858,7 @@ button:disabled {
 }
 
 .danger-button:hover:not(:disabled) {
-  background: #c84f4f;
+  background: #b94747;
 }
 
 .wide {
@@ -975,6 +1065,17 @@ button:disabled {
   overflow-y: auto;
 }
 
+.collaborator-list {
+  max-height: 180px;
+}
+
+.collaborator-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .project-row {
   display: flex;
   align-items: center;
@@ -997,11 +1098,119 @@ button:disabled {
   background: var(--surface);
 }
 
-.settings-readout {
+.settings-panel {
+  gap: 12px;
+}
+
+.settings-panel__section {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-panel__grid {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+}
+
+.settings-panel__range-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-panel__range-row {
+  gap: 6px;
+}
+
+.settings-panel__range-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-panel__range-control strong {
+  min-width: 28px;
+  color: var(--text);
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.settings-panel__reset {
+  width: 100%;
+}
+
+.settings-panel__meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.84rem;
   color: var(--muted);
-  font-size: 0.78rem;
+}
+
+.settings-panel__meta-row strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-panel__owner-name {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.settings-panel__collab-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px;
+  gap: 10px;
+  align-items: center;
+}
+
+.settings-panel__collab-add .ghost-button {
+  width: 80px;
+  height: 38px;
+}
+
+.settings-panel__error {
+  margin-top: -2px;
+}
+
+.settings-panel__collaborators {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-panel__collaborator-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-panel__collaborator-row--full {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-panel__collaborator-row span {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: var(--control-bg);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-panel__collaborator-row .danger-button {
+  width: 80px;
+  height: 38px;
 }
 
 @media (max-width: 920px) {

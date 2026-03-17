@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import express from 'express'
 import multer from 'multer'
 import Database from 'better-sqlite3'
@@ -20,6 +21,7 @@ const activeDesktopSessions = new Map()
 const activeMobileConnections = new Map()
 const CLIENT_TTL_MS = 45000
 const MOBILE_CONNECTION_TTL_MS = 30000
+const AUTH_COOKIE = 'session'
 
 fs.mkdirSync(uploadsDir, { recursive: true })
 fs.mkdirSync(tempDir, { recursive: true })
@@ -37,6 +39,20 @@ const defaultProjectSettings = {
   verticalGap: 44,
   imageMode: 'square',
   layoutMode: 'compact',
+}
+
+const defaultUserProjectUi = {
+  theme: 'dark',
+  previewOpen: false,
+  inspectorOpen: true,
+  settingsOpen: false,
+  cameraOpen: false,
+  accountOpen: false,
+  previewWidth: 340,
+  inspectorWidth: 320,
+  settingsWidth: 280,
+  cameraWidth: 360,
+  accountWidth: 300,
 }
 
 function generateShortId() {
@@ -58,6 +74,73 @@ function generateUniqueId(lookup) {
   }
 
   throw new Error('Unable to generate a unique short id')
+}
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex')
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex')
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex')
+  return `${salt}:${hash}`
+}
+
+function verifyPassword(password, storedHash) {
+  const [salt, hash] = String(storedHash || '').split(':')
+  if (!salt || !hash) {
+    return false
+  }
+
+  const candidate = crypto.scryptSync(password, salt, 64)
+  const actual = Buffer.from(hash, 'hex')
+  return actual.length === candidate.length && crypto.timingSafeEqual(actual, candidate)
+}
+
+function parseCookies(headerValue) {
+  const cookies = {}
+  for (const pair of String(headerValue || '').split(';')) {
+    const [rawKey, ...rest] = pair.split('=')
+    const key = rawKey?.trim()
+    if (!key) {
+      continue
+    }
+    cookies[key] = decodeURIComponent(rest.join('=').trim())
+  }
+  return cookies
+}
+
+function setAuthCookie(res, token) {
+  res.setHeader(
+    'Set-Cookie',
+    `${AUTH_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`,
+  )
+}
+
+function clearAuthCookie(res) {
+  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`)
+}
+
+function normalizeUsername(usernameInput) {
+  const username = String(usernameInput || '')
+    .trim()
+    .toLowerCase()
+  if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
+    const error = new Error('Username must be 3-32 characters using letters, numbers, dot, underscore, or dash')
+    error.status = 400
+    throw error
+  }
+  return username
+}
+
+function normalizePassword(passwordInput) {
+  const password = String(passwordInput || '')
+  if (password.length < 8) {
+    const error = new Error('Password must be at least 8 characters')
+    error.status = 400
+    throw error
+  }
+  return password
 }
 
 function getProjectUploadDir(projectId) {
@@ -273,9 +356,60 @@ function ensureTextIdSchema() {
 
 ensureTextIdSchema()
 
+function ensureAuthSchema() {
+  const projectColumns = db.prepare(`PRAGMA table_info(projects)`).all()
+  if (!projectColumns.some((column) => column.name === 'owner_user_id')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN owner_user_id TEXT`)
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      capture_session_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS project_collaborators (
+      project_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      added_by_user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (project_id, user_id),
+      FOREIGN KEY(project_id) REFERENCES projects(id),
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(added_by_user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_project_preferences (
+      user_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      settings_json TEXT DEFAULT '{}',
+      ui_json TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, project_id),
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(project_id) REFERENCES projects(id)
+    );
+  `)
+}
+
+ensureAuthSchema()
+
 const insertProject = db.prepare(`
-  INSERT INTO projects (id, name, description, settings_json, created_at, updated_at)
-  VALUES (@id, @name, @description, @settings_json, @created_at, @updated_at)
+  INSERT INTO projects (id, name, description, settings_json, owner_user_id, created_at, updated_at)
+  VALUES (@id, @name, @description, @settings_json, @owner_user_id, @created_at, @updated_at)
 `)
 
 const insertNode = db.prepare(`
@@ -289,14 +423,135 @@ const insertNode = db.prepare(`
 `)
 
 const getProject = db.prepare(`SELECT * FROM projects WHERE id = ?`)
-const listProjects = db.prepare(`
+const countUsers = db.prepare(`SELECT COUNT(*) AS count FROM users`)
+const getUserById = db.prepare(`SELECT * FROM users WHERE id = ?`)
+const getUserByUsername = db.prepare(`SELECT * FROM users WHERE username = ?`)
+const updateUsernameStmt = db.prepare(`
+  UPDATE users
+  SET username = @username,
+      updated_at = @updated_at
+  WHERE id = @id
+`)
+const updatePasswordStmt = db.prepare(`
+  UPDATE users
+  SET password_hash = @password_hash,
+      updated_at = @updated_at
+  WHERE id = @id
+`)
+const insertUser = db.prepare(`
+  INSERT INTO users (id, username, password_hash, created_at, updated_at)
+  VALUES (@id, @username, @password_hash, @created_at, @updated_at)
+`)
+const getSessionById = db.prepare(`
+  SELECT s.*, u.username
+  FROM user_sessions s
+  JOIN users u ON u.id = s.user_id
+  WHERE s.id = ?
+`)
+const getSessionByCaptureId = db.prepare(`
+  SELECT s.*, u.username
+  FROM user_sessions s
+  JOIN users u ON u.id = s.user_id
+  WHERE s.capture_session_id = ?
+`)
+const insertSession = db.prepare(`
+  INSERT INTO user_sessions (id, user_id, capture_session_id, created_at, updated_at)
+  VALUES (@id, @user_id, @capture_session_id, @created_at, @updated_at)
+`)
+const updateSessionTimestampStmt = db.prepare(`
+  UPDATE user_sessions
+  SET updated_at = @updated_at
+  WHERE id = @id
+`)
+const deleteSessionStmt = db.prepare(`DELETE FROM user_sessions WHERE id = ?`)
+const listSessionsByUserStmt = db.prepare(`SELECT * FROM user_sessions WHERE user_id = ?`)
+const deleteSessionsByUserStmt = db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`)
+const countOwnedProjectsByUserStmt = db.prepare(`SELECT COUNT(*) AS count FROM projects WHERE owner_user_id = ?`)
+const deletePreferencesByUserStmt = db.prepare(`DELETE FROM user_project_preferences WHERE user_id = ?`)
+const deleteCollaboratorsByUserStmt = db.prepare(`
+  DELETE FROM project_collaborators
+  WHERE user_id = ?
+     OR added_by_user_id = ?
+`)
+const deleteUserStmt = db.prepare(`DELETE FROM users WHERE id = ?`)
+const claimOwnerlessProjectsStmt = db.prepare(`
+  UPDATE projects
+  SET owner_user_id = @owner_user_id
+  WHERE owner_user_id IS NULL
+`)
+const listAccessibleProjects = db.prepare(`
   SELECT
     p.*,
-    COUNT(n.id) AS node_count
+    owner.username AS owner_username,
+    COUNT(n.id) AS node_count,
+    CASE WHEN p.owner_user_id = @user_id THEN 1 ELSE 0 END AS is_owner
   FROM projects p
   LEFT JOIN nodes n ON n.project_id = p.id
+  LEFT JOIN users owner ON owner.id = p.owner_user_id
+  WHERE p.owner_user_id = @user_id
+     OR EXISTS (
+       SELECT 1
+       FROM project_collaborators pc
+       WHERE pc.project_id = p.id
+         AND pc.user_id = @user_id
+     )
   GROUP BY p.id
   ORDER BY p.updated_at DESC, p.id DESC
+`)
+const getAccessibleProjectRow = db.prepare(`
+  SELECT
+    p.*,
+    owner.username AS owner_username,
+    CASE WHEN p.owner_user_id = @user_id THEN 1 ELSE 0 END AS is_owner
+  FROM projects p
+  LEFT JOIN users owner ON owner.id = p.owner_user_id
+  WHERE p.id = @project_id
+    AND (
+      p.owner_user_id = @user_id
+      OR EXISTS (
+        SELECT 1
+        FROM project_collaborators pc
+        WHERE pc.project_id = p.id
+          AND pc.user_id = @user_id
+      )
+    )
+`)
+const listProjectCollaborators = db.prepare(`
+  SELECT u.id, u.username
+  FROM project_collaborators pc
+  JOIN users u ON u.id = pc.user_id
+  WHERE pc.project_id = ?
+  ORDER BY u.username COLLATE NOCASE ASC
+`)
+const getProjectCollaborator = db.prepare(`
+  SELECT *
+  FROM project_collaborators
+  WHERE project_id = ?
+    AND user_id = ?
+`)
+const insertProjectCollaborator = db.prepare(`
+  INSERT INTO project_collaborators (project_id, user_id, added_by_user_id, created_at)
+  VALUES (@project_id, @user_id, @added_by_user_id, @created_at)
+`)
+const deleteProjectCollaboratorStmt = db.prepare(`
+  DELETE FROM project_collaborators
+  WHERE project_id = ?
+    AND user_id = ?
+`)
+const deleteProjectCollaboratorsStmt = db.prepare(`DELETE FROM project_collaborators WHERE project_id = ?`)
+const getUserProjectPreference = db.prepare(`
+  SELECT *
+  FROM user_project_preferences
+  WHERE user_id = ?
+    AND project_id = ?
+`)
+const upsertUserProjectPreference = db.prepare(`
+  INSERT INTO user_project_preferences (user_id, project_id, settings_json, ui_json, created_at, updated_at)
+  VALUES (@user_id, @project_id, @settings_json, @ui_json, @created_at, @updated_at)
+  ON CONFLICT(user_id, project_id) DO UPDATE SET
+    settings_json = excluded.settings_json,
+    ui_json = excluded.ui_json,
+    updated_at = excluded.updated_at
 `)
 const getProjectNodes = db.prepare(`
   SELECT *
@@ -360,7 +615,7 @@ const updateNodeCollapsedStmt = db.prepare(`
 `)
 const deleteNodeStmt = db.prepare(`DELETE FROM nodes WHERE id = ?`)
 
-const createProjectWithRoot = db.transaction(({ name, description }) => {
+const createProjectWithRoot = db.transaction(({ name, description, owner_user_id }) => {
   const now = new Date().toISOString()
   const projectId = generateUniqueId((candidate) => Boolean(getProject.get(candidate)))
   insertProject.run({
@@ -368,6 +623,7 @@ const createProjectWithRoot = db.transaction(({ name, description }) => {
     name,
     description,
     settings_json: JSON.stringify(defaultProjectSettings),
+    owner_user_id: owner_user_id || null,
     created_at: now,
     updated_at: now,
   })
@@ -531,6 +787,7 @@ const deleteProjectRecursive = db.transaction((projectId) => {
   }
 
   deleteNodesByProjectStmt.run(projectId)
+  deleteProjectCollaboratorsStmt.run(projectId)
   deleteProjectStmt.run(projectId)
 
   const projectUploadDir = getProjectUploadDir(projectId)
@@ -609,6 +866,27 @@ function createUntitledName(projectId) {
   return `<untitled ${index}>`
 }
 
+function normalizeUserProjectUi(uiInput) {
+  const ui = {
+    ...defaultUserProjectUi,
+    ...(uiInput || {}),
+  }
+
+  ui.theme = ui.theme === 'light' ? 'light' : 'dark'
+  ui.previewOpen = Boolean(ui.previewOpen)
+  ui.inspectorOpen = Boolean(ui.inspectorOpen)
+  ui.settingsOpen = Boolean(ui.settingsOpen)
+  ui.cameraOpen = Boolean(ui.cameraOpen)
+  ui.accountOpen = Boolean(ui.accountOpen)
+  ui.previewWidth = Math.max(220, Math.min(720, Number(ui.previewWidth) || defaultUserProjectUi.previewWidth))
+  ui.inspectorWidth = Math.max(220, Math.min(720, Number(ui.inspectorWidth) || defaultUserProjectUi.inspectorWidth))
+  ui.settingsWidth = Math.max(220, Math.min(720, Number(ui.settingsWidth) || defaultUserProjectUi.settingsWidth))
+  ui.cameraWidth = Math.max(220, Math.min(720, Number(ui.cameraWidth) || defaultUserProjectUi.cameraWidth))
+  ui.accountWidth = Math.max(220, Math.min(720, Number(ui.accountWidth) || defaultUserProjectUi.accountWidth))
+
+  return ui
+}
+
 function normalizeProjectSettings(settingsInput) {
   const settings = {
     ...defaultProjectSettings,
@@ -624,14 +902,52 @@ function normalizeProjectSettings(settingsInput) {
   return settings
 }
 
-function serializeProject(row) {
+function getOrCreateProjectPreferences(project, userId) {
+  const existing = getUserProjectPreference.get(userId, project.id)
+  if (existing) {
+    return {
+      settings: normalizeProjectSettings(JSON.parse(existing.settings_json || '{}')),
+      ui: normalizeUserProjectUi(JSON.parse(existing.ui_json || '{}')),
+    }
+  }
+
+  const now = new Date().toISOString()
+  const preferences = {
+    settings: normalizeProjectSettings(JSON.parse(project.settings_json || '{}')),
+    ui: normalizeUserProjectUi({}),
+  }
+  upsertUserProjectPreference.run({
+    user_id: userId,
+    project_id: project.id,
+    settings_json: JSON.stringify(preferences.settings),
+    ui_json: JSON.stringify(preferences.ui),
+    created_at: now,
+    updated_at: now,
+  })
+  return preferences
+}
+
+function serializeProject(row, userId) {
+  const preferences = userId ? getOrCreateProjectPreferences(row, userId) : {
+    settings: normalizeProjectSettings(JSON.parse(row.settings_json || '{}')),
+    ui: normalizeUserProjectUi({}),
+  }
+  const collaborators = listProjectCollaborators
+    .all(row.id)
+    .map((collaborator) => ({ id: collaborator.id, username: collaborator.username }))
+
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     created_at: row.created_at,
     updated_at: row.updated_at,
-    settings: normalizeProjectSettings(JSON.parse(row.settings_json || '{}')),
+    ownerUserId: row.owner_user_id || null,
+    ownerUsername: row.owner_username || null,
+    canManageUsers: Boolean(userId && row.owner_user_id === userId),
+    collaborators,
+    settings: preferences.settings,
+    ui: preferences.ui,
   }
 }
 
@@ -655,7 +971,7 @@ function serializeNode(row) {
   }
 }
 
-function buildTree(project, rows) {
+function buildTree(project, rows, userId = null) {
   const nodes = rows.map((row) => serializeNode(row))
   const byId = new Map(nodes.map((node) => [node.id, { ...node, children: [], variants: [] }]))
   let root = null
@@ -681,7 +997,7 @@ function buildTree(project, rows) {
   }
 
   return {
-    project: serializeProject(project),
+    project: serializeProject(project, userId),
     root,
     nodes: Array.from(byId.values()),
   }
@@ -697,6 +1013,64 @@ function assertProject(projectId) {
   return project
 }
 
+function getRequestUser(req) {
+  const cookies = parseCookies(req.headers.cookie)
+  const sessionId = String(cookies[AUTH_COOKIE] || '').trim()
+  if (!sessionId) {
+    return null
+  }
+
+  const session = getSessionById.get(sessionId)
+  if (!session) {
+    return null
+  }
+
+  updateSessionTimestampStmt.run({
+    id: session.id,
+    updated_at: new Date().toISOString(),
+  })
+
+  return {
+    id: session.user_id,
+    username: session.username,
+    authSessionId: session.id,
+    captureSessionId: session.capture_session_id,
+  }
+}
+
+function requireAuth(req, res, next) {
+  const user = getRequestUser(req)
+  if (!user) {
+    return res.status(401).json({ error: 'Authentication required' })
+  }
+
+  req.user = user
+  return next()
+}
+
+function assertProjectAccess(projectId, userId) {
+  const project = getAccessibleProjectRow.get({
+    project_id: String(projectId || '').trim(),
+    user_id: userId,
+  })
+  if (!project) {
+    const error = new Error('Project not found')
+    error.status = 404
+    throw error
+  }
+  return project
+}
+
+function assertProjectOwner(projectId, userId) {
+  const project = assertProjectAccess(projectId, userId)
+  if (project.owner_user_id !== userId) {
+    const error = new Error('Only the project owner can manage collaborators')
+    error.status = 403
+    throw error
+  }
+  return project
+}
+
 function assertNode(nodeId) {
   const node = getNode.get(String(nodeId || '').trim())
   if (!node) {
@@ -704,6 +1078,12 @@ function assertNode(nodeId) {
     error.status = 404
     throw error
   }
+  return node
+}
+
+function assertNodeAccess(nodeId, userId) {
+  const node = assertNode(nodeId)
+  assertProjectAccess(node.project_id, userId)
   return node
 }
 
@@ -766,10 +1146,28 @@ function ensureNoCycle(nodeId, parentId) {
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const project = assertProject(req.params.id)
-    const targetDir = getProjectUploadDir(project.id)
-    fs.mkdirSync(targetDir, { recursive: true })
-    cb(null, targetDir)
+    try {
+      let projectId = null
+      if (req.params.id) {
+        projectId = req.user ? assertProjectAccess(req.params.id, req.user.id).id : assertProject(req.params.id).id
+      } else if (req.params.sessionId) {
+        const session = getDesktopSession(String(req.params.sessionId || '').trim().toLowerCase())
+        if (!session) {
+          throw Object.assign(new Error('Session is not active'), { status: 404 })
+        }
+        projectId = session.projectId
+      }
+
+      if (!projectId) {
+        throw Object.assign(new Error('Project not found'), { status: 404 })
+      }
+
+      const targetDir = getProjectUploadDir(projectId)
+      fs.mkdirSync(targetDir, { recursive: true })
+      cb(null, targetDir)
+    } catch (error) {
+      cb(error)
+    }
   },
   filename: (req, file, cb) => {
     const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -1210,7 +1608,7 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
   return serializeNode(assertNode(oldToNew.get(manifestRootId)))
 }
 
-function importProjectArchive(archivePath, projectNameOverride = '') {
+function importProjectArchive(archivePath, projectNameOverride = '', ownerUserId = null) {
   const extractDir = makeTempDir('import')
   let projectId = null
 
@@ -1230,6 +1628,7 @@ function importProjectArchive(archivePath, projectNameOverride = '') {
         String(projectNameOverride || manifest.project?.name || 'Imported Project').trim() ||
         'Imported Project',
       description: String(manifest.project?.description || '').trim(),
+      owner_user_id: ownerUserId,
     })
 
     if (manifest.project?.settings) {
@@ -1409,18 +1808,221 @@ function getDesktopSession(sessionId) {
 }
 
 app.use(express.json({ limit: '5mb' }))
-app.use('/uploads', express.static(uploadsDir))
+
+app.get(/^\/uploads\/(.+)$/, requireAuth, (req, res, next) => {
+  try {
+    const relativePath = String(req.params[0] || '')
+    const normalized = relativePath.split(/[\\/]+/).filter(Boolean)
+    if (normalized.length < 2) {
+      return res.status(404).json({ error: 'File not found' })
+    }
+
+    const projectId = normalized[0]
+    assertProjectAccess(projectId, req.user.id)
+
+    const absolutePath = path.join(uploadsDir, ...normalized)
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ error: 'File not found' })
+    }
+
+    return res.sendFile(absolutePath)
+  } catch (error) {
+    return next(error)
+  }
+})
 
 app.get('/capture', (_req, res) => {
   res.type('html').send(renderMobileCapturePage())
 })
 
-app.get('/api/projects', (req, res) => {
-  const projects = listProjects.all().map(serializeProject)
+app.get('/api/auth/me', (req, res) => {
+  const user = getRequestUser(req)
+  if (!user) {
+    return res.json({
+      authenticated: false,
+      user: null,
+    })
+  }
+
+  res.json({
+    authenticated: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      captureSessionId: user.captureSessionId,
+    },
+  })
+})
+
+app.post('/api/auth/register', (req, res, next) => {
+  try {
+    const username = normalizeUsername(req.body?.username)
+    const password = normalizePassword(req.body?.password)
+    if (getUserByUsername.get(username)) {
+      return res.json({ ok: false, error: 'Username is already taken' })
+    }
+
+    const now = new Date().toISOString()
+    const userId = generateUniqueId((candidate) => Boolean(getUserById.get(candidate)))
+    insertUser.run({
+      id: userId,
+      username,
+      password_hash: hashPassword(password),
+      created_at: now,
+      updated_at: now,
+    })
+
+    if ((countUsers.get()?.count || 0) === 1) {
+      claimOwnerlessProjectsStmt.run({ owner_user_id: userId })
+    }
+
+    const sessionToken = generateToken()
+    const captureSessionId = generateUniqueId((candidate) => Boolean(getSessionByCaptureId.get(candidate)))
+    insertSession.run({
+      id: sessionToken,
+      user_id: userId,
+      capture_session_id: captureSessionId,
+      created_at: now,
+      updated_at: now,
+    })
+    setAuthCookie(res, sessionToken)
+    res.status(201).json({
+      ok: true,
+      id: userId,
+      username,
+      captureSessionId,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/auth/login', (req, res, next) => {
+  try {
+    const username = normalizeUsername(req.body?.username)
+    const password = String(req.body?.password || '')
+    const user = getUserByUsername.get(username)
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      return res.json({ ok: false, error: 'Invalid username or password' })
+    }
+
+    const now = new Date().toISOString()
+    const sessionToken = generateToken()
+    const captureSessionId = generateUniqueId((candidate) => Boolean(getSessionByCaptureId.get(candidate)))
+    insertSession.run({
+      id: sessionToken,
+      user_id: user.id,
+      capture_session_id: captureSessionId,
+      created_at: now,
+      updated_at: now,
+    })
+    setAuthCookie(res, sessionToken)
+    res.json({
+      ok: true,
+      id: user.id,
+      username: user.username,
+      captureSessionId,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+  deleteSessionStmt.run(req.user.authSessionId)
+  activeDesktopSessions.delete(req.user.captureSessionId)
+  activeMobileConnections.delete(req.user.captureSessionId)
+  clearAuthCookie(res)
+  res.status(204).send()
+})
+
+app.patch('/api/account/username', requireAuth, (req, res, next) => {
+  try {
+    const username = normalizeUsername(req.body?.username)
+    const existing = getUserByUsername.get(username)
+    if (existing && existing.id !== req.user.id) {
+      return res.json({ ok: false, error: 'Username is already taken' })
+    }
+
+    updateUsernameStmt.run({
+      id: req.user.id,
+      username,
+      updated_at: new Date().toISOString(),
+    })
+
+    res.json({
+      ok: true,
+      id: req.user.id,
+      username,
+      captureSessionId: req.user.captureSessionId,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/account/password', requireAuth, (req, res, next) => {
+  try {
+    const currentPassword = String(req.body?.currentPassword || '')
+    const newPassword = normalizePassword(req.body?.newPassword)
+    const user = getUserById.get(req.user.id)
+    if (!user || !verifyPassword(currentPassword, user.password_hash)) {
+      return res.json({ ok: false, error: 'Current password is incorrect' })
+    }
+
+    updatePasswordStmt.run({
+      id: req.user.id,
+      password_hash: hashPassword(newPassword),
+      updated_at: new Date().toISOString(),
+    })
+
+    res.status(204).send()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/account', requireAuth, (req, res, next) => {
+  try {
+    const username = normalizeUsername(req.body?.username)
+    if (username !== req.user.username) {
+      return res.json({ ok: false, error: 'Username confirmation does not match' })
+    }
+    const ownedProjectCount = Number(countOwnedProjectsByUserStmt.get(req.user.id)?.count || 0)
+    if (ownedProjectCount > 0) {
+      return res.json({ ok: false, error: 'Delete or transfer your owned projects before deleting this account' })
+    }
+
+    const deleteAccountTx = db.transaction(() => {
+      const sessions = listSessionsByUserStmt.all(req.user.id)
+      deletePreferencesByUserStmt.run(req.user.id)
+      deleteCollaboratorsByUserStmt.run(req.user.id, req.user.id)
+      deleteSessionsByUserStmt.run(req.user.id)
+      deleteUserStmt.run(req.user.id)
+      return sessions
+    })
+
+    const sessions = deleteAccountTx()
+    for (const session of sessions) {
+      activeDesktopSessions.delete(session.capture_session_id)
+      activeMobileConnections.delete(session.capture_session_id)
+    }
+
+    clearAuthCookie(res)
+    res.status(204).send()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/projects', requireAuth, (req, res) => {
+  const projects = listAccessibleProjects
+    .all({ user_id: req.user.id })
+    .map((project) => serializeProject(project, req.user.id))
   res.json(projects)
 })
 
-app.post('/api/projects', (req, res, next) => {
+app.post('/api/projects', requireAuth, (req, res, next) => {
   try {
     const name = String(req.body.name || '').trim()
     const description = String(req.body.description || '').trim()
@@ -1429,29 +2031,29 @@ app.post('/api/projects', (req, res, next) => {
       return res.status(400).json({ error: 'Project name is required' })
     }
 
-    const projectId = createProjectWithRoot({ name, description })
-    const project = assertProject(projectId)
-    const tree = buildTree(project, getProjectNodes.all(projectId))
+    const projectId = createProjectWithRoot({ name, description, owner_user_id: req.user.id })
+    const project = assertProjectAccess(projectId, req.user.id)
+    const tree = buildTree(project, getProjectNodes.all(projectId), req.user.id)
     res.status(201).json(tree)
   } catch (error) {
     next(error)
   }
 })
 
-app.get('/api/projects/:id/tree', (req, res, next) => {
+app.get('/api/projects/:id/tree', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
-    const tree = buildTree(project, getProjectNodes.all(projectId))
+    const tree = buildTree(project, getProjectNodes.all(projectId), req.user.id)
     res.json(tree)
   } catch (error) {
     next(error)
   }
 })
 
-app.get('/api/projects/:id/clients', (req, res, next) => {
+app.get('/api/projects/:id/clients', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
 
     const clients = listProjectSessions(projectId).sort((a, b) => a.id.localeCompare(b.id))
@@ -1468,12 +2070,15 @@ app.get('/api/projects/:id/clients', (req, res, next) => {
   }
 })
 
-app.patch('/api/projects/:id/clients/:clientId', (req, res, next) => {
+app.patch('/api/projects/:id/clients/:clientId', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
 
     const clientId = String(req.params.clientId || '').trim()
+    if (clientId !== req.user.captureSessionId) {
+      return res.status(403).json({ error: 'Session mismatch' })
+    }
     const name = String(req.body.name || '').trim()
     const selectedNodeId = String(req.body.selectedNodeId || '').trim()
     const selectedNode = assertNode(selectedNodeId)
@@ -1501,10 +2106,11 @@ app.get('/api/sessions/:sessionId', (req, res, next) => {
     const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
     const session = getDesktopSession(sessionId)
     if (!session) {
-      return res.status(404).json({ error: 'Session is not active' })
+      return res.json({ ok: false, error: 'Session is not active', connectionCount: 0 })
     }
 
     res.json({
+      ok: true,
       id: session.id,
       projectId: session.projectId,
       projectName: session.projectName,
@@ -1517,10 +2123,13 @@ app.get('/api/sessions/:sessionId', (req, res, next) => {
   }
 })
 
-app.patch('/api/sessions/:sessionId', (req, res, next) => {
+app.patch('/api/sessions/:sessionId', requireAuth, (req, res, next) => {
   try {
     const sessionId = String(req.params.sessionId || '').trim().toLowerCase()
-    const project = assertProject(req.body.projectId)
+    if (sessionId !== req.user.captureSessionId) {
+      return res.status(403).json({ error: 'Session mismatch' })
+    }
+    const project = assertProjectAccess(req.body.projectId, req.user.id)
     const projectId = project.id
     const selectedNodeId = String(req.body.selectedNodeId || '').trim()
     const selectedNode = assertNode(selectedNodeId)
@@ -1613,9 +2222,9 @@ app.post('/api/sessions/:sessionId/connections/:connectionId/release', (req, res
   }
 })
 
-app.get('/api/projects/:id/events', (req, res, next) => {
+app.get('/api/projects/:id/events', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
 
     res.setHeader('Content-Type', 'text/event-stream')
@@ -1647,31 +2256,117 @@ app.get('/api/projects/:id/events', (req, res, next) => {
   }
 })
 
-app.patch('/api/projects/:id/settings', (req, res, next) => {
+app.patch('/api/projects/:id/settings', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
-    const currentSettings = normalizeProjectSettings(JSON.parse(project.settings_json || '{}'))
+    const currentPreferences = getOrCreateProjectPreferences(project, req.user.id)
     const nextSettings = normalizeProjectSettings({
-      ...currentSettings,
+      ...currentPreferences.settings,
       ...(req.body || {}),
     })
-
-    updateProjectSettings({
-      id: projectId,
-      settings: nextSettings,
+    upsertUserProjectPreference.run({
+      user_id: req.user.id,
+      project_id: projectId,
+      settings_json: JSON.stringify(nextSettings),
+      ui_json: JSON.stringify(currentPreferences.ui),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     })
 
     broadcastProjectEvent(projectId)
-    res.json(serializeProject(assertProject(projectId)))
+    res.json(serializeProject(assertProjectAccess(projectId, req.user.id), req.user.id))
   } catch (error) {
     next(error)
   }
 })
 
-app.post('/api/projects/:id/collapse-all', (req, res, next) => {
+app.patch('/api/projects/:id/preferences', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
+    const projectId = project.id
+    const currentPreferences = getOrCreateProjectPreferences(project, req.user.id)
+    const nextUi = normalizeUserProjectUi({
+      ...currentPreferences.ui,
+      ...(req.body || {}),
+    })
+
+    upsertUserProjectPreference.run({
+      user_id: req.user.id,
+      project_id: projectId,
+      settings_json: JSON.stringify(currentPreferences.settings),
+      ui_json: JSON.stringify(nextUi),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+
+    broadcastProjectEvent(projectId)
+    res.json(serializeProject(assertProjectAccess(projectId, req.user.id), req.user.id))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/projects/:id/collaborators', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectAccess(req.params.id, req.user.id)
+    res.json({
+      owner: project.owner_user_id ? { id: project.owner_user_id, username: project.owner_username } : null,
+      collaborators: listProjectCollaborators.all(project.id),
+      canManageUsers: project.owner_user_id === req.user.id,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/projects/:id/collaborators', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectOwner(req.params.id, req.user.id)
+    const username = normalizeUsername(req.body?.username)
+    const collaborator = getUserByUsername.get(username)
+    if (!collaborator) {
+      return res.json({ ok: false, error: 'User not found' })
+    }
+    if (collaborator.id === req.user.id) {
+      return res.json({ ok: false, error: 'Project owner is already included' })
+    }
+    if (!getProjectCollaborator.get(project.id, collaborator.id)) {
+      insertProjectCollaborator.run({
+        project_id: project.id,
+        user_id: collaborator.id,
+        added_by_user_id: req.user.id,
+        created_at: new Date().toISOString(),
+      })
+    }
+    res.status(201).json({
+      ok: true,
+      owner: project.owner_user_id ? { id: project.owner_user_id, username: project.owner_username } : null,
+      collaborators: listProjectCollaborators.all(project.id),
+      canManageUsers: true,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/projects/:id/collaborators/:userId', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectOwner(req.params.id, req.user.id)
+    deleteProjectCollaboratorStmt.run(project.id, String(req.params.userId || '').trim())
+    res.json({
+      owner: project.owner_user_id ? { id: project.owner_user_id, username: project.owner_username } : null,
+      collaborators: listProjectCollaborators.all(project.id),
+      canManageUsers: true,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/projects/:id/collapse-all', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
     const collapsed = Boolean(req.body?.collapsed)
     const updatedIds = setProjectCollapsedState({ projectId, collapsed: collapsed ? 1 : 0 })
@@ -1682,9 +2377,9 @@ app.post('/api/projects/:id/collapse-all', (req, res, next) => {
   }
 })
 
-app.delete('/api/projects/:id', (req, res, next) => {
+app.delete('/api/projects/:id', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
     broadcastProjectEvent(projectId, { type: 'project-deleted' })
     for (const [sessionId, session] of activeDesktopSessions) {
@@ -1700,11 +2395,11 @@ app.delete('/api/projects/:id', (req, res, next) => {
   }
 })
 
-app.get('/api/projects/:id/export', (req, res, next) => {
+app.get('/api/projects/:id/export', requireAuth, (req, res, next) => {
   let archivePath = null
 
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
     archivePath = exportProjectArchive(projectId)
     const safeName = project.name.replace(/[^a-zA-Z0-9._-]/g, '_') || `project-${projectId}`
@@ -1724,11 +2419,11 @@ app.get('/api/projects/:id/export', (req, res, next) => {
   }
 })
 
-app.get('/api/projects/:id/export-media', (req, res, next) => {
+app.get('/api/projects/:id/export-media', requireAuth, (req, res, next) => {
   let archivePath = null
 
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
     archivePath = exportProjectMediaArchive(projectId)
     const safeName = project.name.replace(/[^a-zA-Z0-9._-]/g, '_') || `project-${projectId}`
@@ -1748,11 +2443,11 @@ app.get('/api/projects/:id/export-media', (req, res, next) => {
   }
 })
 
-app.get('/api/projects/:id/snapshot', (req, res, next) => {
+app.get('/api/projects/:id/snapshot', requireAuth, (req, res, next) => {
   let archivePath = null
 
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
     archivePath = exportProjectArchive(projectId)
     res.type('application/zip')
@@ -1772,7 +2467,7 @@ app.get('/api/projects/:id/snapshot', (req, res, next) => {
   }
 })
 
-app.post('/api/projects/import', importUpload.single('archive'), (req, res, next) => {
+app.post('/api/projects/import', requireAuth, importUpload.single('archive'), (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Project archive is required' })
@@ -1780,9 +2475,9 @@ app.post('/api/projects/import', importUpload.single('archive'), (req, res, next
 
     const archivePath = `${req.file.path}${path.extname(req.file.originalname || '') || '.zip'}`
     fs.renameSync(req.file.path, archivePath)
-    const importedTree = importProjectArchive(archivePath, String(req.body.projectName || '').trim())
+    const importedTree = importProjectArchive(archivePath, String(req.body.projectName || '').trim(), req.user.id)
     fs.unlinkSync(archivePath)
-    res.status(201).json(importedTree)
+    res.status(201).json(buildTree(assertProjectAccess(importedTree.project.id, req.user.id), getProjectNodes.all(importedTree.project.id), req.user.id))
   } catch (error) {
     if (req.file?.path && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path)
@@ -1797,9 +2492,9 @@ app.post('/api/projects/import', importUpload.single('archive'), (req, res, next
   }
 })
 
-app.post('/api/projects/:id/restore', importUpload.single('archive'), (req, res, next) => {
+app.post('/api/projects/:id/restore', requireAuth, importUpload.single('archive'), (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
 
     if (!req.file) {
@@ -1808,10 +2503,10 @@ app.post('/api/projects/:id/restore', importUpload.single('archive'), (req, res,
 
     const archivePath = `${req.file.path}${path.extname(req.file.originalname || '') || '.zip'}`
     fs.renameSync(req.file.path, archivePath)
-    const restoredTree = restoreProjectFromArchive(projectId, archivePath)
+    restoreProjectFromArchive(projectId, archivePath)
     fs.unlinkSync(archivePath)
     broadcastProjectEvent(projectId)
-    res.json(restoredTree)
+    res.json(buildTree(assertProjectAccess(projectId, req.user.id), getProjectNodes.all(projectId), req.user.id))
   } catch (error) {
     if (req.file?.path && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path)
@@ -1826,14 +2521,17 @@ app.post('/api/projects/:id/restore', importUpload.single('archive'), (req, res,
   }
 })
 
-app.post('/api/projects/:id/folders', (req, res, next) => {
+app.post('/api/projects/:id/folders', requireAuth, (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
 
     const clientId = String(req.body.clientId || '').trim()
     let parentId = String(req.body.parentId || '').trim() || null
     if (!parentId && clientId) {
+      if (clientId !== req.user.captureSessionId) {
+        return res.status(403).json({ error: 'Session mismatch' })
+      }
       const controllingClient = getDesktopSession(clientId)
       if (!controllingClient) {
         return res.status(400).json({ error: 'Selected client is not active' })
@@ -1873,9 +2571,9 @@ app.post('/api/projects/:id/folders', (req, res, next) => {
   }
 })
 
-app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'preview', maxCount: 1 }]), (req, res, next) => {
+app.post('/api/projects/:id/photos', requireAuth, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'preview', maxCount: 1 }]), (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
 
     const clientId = String(req.body.clientId || '').trim()
@@ -1883,6 +2581,9 @@ app.post('/api/projects/:id/photos', upload.fields([{ name: 'file', maxCount: 1 
     let parentId = String(req.body.parentId || '').trim() || null
     let variantOfId = req.body.variantOfId != null ? String(req.body.variantOfId).trim() : null
     if (!parentId && clientId) {
+      if (clientId !== req.user.captureSessionId) {
+        return res.status(403).json({ error: 'Session mismatch' })
+      }
       const controllingClient = getDesktopSession(clientId)
       if (!controllingClient) {
         return res.status(400).json({ error: 'Selected client is not active' })
@@ -2002,9 +2703,9 @@ app.post('/api/sessions/:sessionId/photos', upload.fields([{ name: 'file', maxCo
   }
 })
 
-app.post('/api/projects/:id/subtree-restore', restoreUpload.any(), (req, res, next) => {
+app.post('/api/projects/:id/subtree-restore', requireAuth, restoreUpload.any(), (req, res, next) => {
   try {
-    const project = assertProject(req.params.id)
+    const project = assertProjectAccess(req.params.id, req.user.id)
     const projectId = project.id
     const manifest = JSON.parse(String(req.body.manifest || '{}'))
     const restoredRoot = restoreSubtreeFromPayload(projectId, manifest, req.files || [])
@@ -2015,9 +2716,9 @@ app.post('/api/projects/:id/subtree-restore', restoreUpload.any(), (req, res, ne
   }
 })
 
-app.patch('/api/nodes/:id', (req, res, next) => {
+app.patch('/api/nodes/:id', requireAuth, (req, res, next) => {
   try {
-    const node = assertNode(req.params.id)
+    const node = assertNodeAccess(req.params.id, req.user.id)
 
     updateNode({
       id: node.id,
@@ -2035,9 +2736,9 @@ app.patch('/api/nodes/:id', (req, res, next) => {
   }
 })
 
-app.post('/api/nodes/:id/collapse', (req, res, next) => {
+app.post('/api/nodes/:id/collapse', requireAuth, (req, res, next) => {
   try {
-    const node = assertNode(req.params.id)
+    const node = assertNodeAccess(req.params.id, req.user.id)
     const collapsed = req.body.collapsed ? 1 : 0
     const updatedIds = setNodeCollapsedStateRecursive({
       nodeId: node.id,
@@ -2052,9 +2753,9 @@ app.post('/api/nodes/:id/collapse', (req, res, next) => {
   }
 })
 
-app.post('/api/nodes/:id/move', (req, res, next) => {
+app.post('/api/nodes/:id/move', requireAuth, (req, res, next) => {
   try {
-    const node = assertNode(req.params.id)
+    const node = assertNodeAccess(req.params.id, req.user.id)
     ensureNotRoot(node)
     const variantOfId = req.body.variantOfId != null ? String(req.body.variantOfId).trim() : null
     let parentId = req.body.parentId != null ? String(req.body.parentId).trim() : null
@@ -2098,9 +2799,9 @@ app.post('/api/nodes/:id/move', (req, res, next) => {
   }
 })
 
-app.delete('/api/nodes/:id', (req, res, next) => {
+app.delete('/api/nodes/:id', requireAuth, (req, res, next) => {
   try {
-    const node = assertNode(req.params.id)
+    const node = assertNodeAccess(req.params.id, req.user.id)
     ensureNotRoot(node)
     deleteNodeRecursive(node.id, node.project_id)
     broadcastProjectEvent(node.project_id)

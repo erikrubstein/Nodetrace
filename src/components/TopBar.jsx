@@ -6,6 +6,7 @@ import {
   PhoneIcon,
   PreviewIcon,
   SunIcon,
+  UserIcon,
   WrenchIcon,
 } from './icons'
 
@@ -20,10 +21,12 @@ export default function TopBar({
   inspectorOpen,
   mobileConnectionCount,
   openMenu,
+  accountOpen,
   pendingUploadMode,
   pendingUploadParentId,
   previewOpen,
   projectName,
+  projects,
   redo,
   selectedNode,
   selectedProjectId,
@@ -35,6 +38,7 @@ export default function TopBar({
   setImportArchiveFile,
   setImportProjectName,
   setInspectorOpen,
+  setAccountOpen,
   setOpenMenu,
   setPreviewOpen,
   setSessionDialogOpen,
@@ -74,6 +78,7 @@ export default function TopBar({
               </button>
               <button
                 className="menu-item"
+                disabled={projects.length === 0}
                 onClick={() => {
                   setShowProjectDialog('open')
                   setOpenMenu(null)
@@ -290,6 +295,16 @@ export default function TopBar({
               >
                 {settingsOpen ? 'Hide Settings' : 'Show Settings'}
               </button>
+              <button
+                className="menu-item"
+                onClick={() => {
+                  setAccountOpen((open) => !open)
+                  setOpenMenu(null)
+                }}
+                type="button"
+              >
+                {accountOpen ? 'Hide Account' : 'Show Account'}
+              </button>
             </div>
           ) : null}
         </div>
@@ -345,6 +360,13 @@ export default function TopBar({
           tooltip="Inspector"
         >
           <WrenchIcon />
+        </IconButton>
+        <IconButton
+          aria-label={accountOpen ? 'Close account' : 'Open account'}
+          onClick={() => setAccountOpen((open) => !open)}
+          tooltip="Account"
+        >
+          <UserIcon />
         </IconButton>
         <IconButton
           aria-label={settingsOpen ? 'Close settings' : 'Open settings'}

@@ -1,11 +1,19 @@
 export default function AppDialogs({
+  accountDialog,
+  accountForm,
+  accountStatus,
   busy,
+  changePassword,
+  changeUsername,
   createProject,
+  currentUser,
   deleteNode,
+  deleteAccount,
   deleteNodeOpen,
   deleteProject,
   deleteProjectText,
   desktopClientId,
+  error,
   exportFileName,
   exportMediaTree,
   exportProject,
@@ -22,6 +30,8 @@ export default function AppDialogs({
   selectedNode,
   selectedProjectId,
   sessionDialogOpen,
+  setAccountDialog,
+  setAccountForm,
   setDeleteNodeOpen,
   setDeleteProjectText,
   setExportFileName,
@@ -41,6 +51,137 @@ export default function AppDialogs({
 }) {
   return (
     <>
+      {accountDialog === 'username' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setAccountDialog(null)} role="presentation">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) =>
+              handleDialogEnter(event, changeUsername, Boolean(accountForm.username.trim()) && !busy)
+            }
+            role="dialog"
+          >
+            <div className="dialog__title">Change Username</div>
+            <input
+              autoFocus
+              onChange={(event) => setAccountForm((current) => ({ ...current, username: event.target.value }))}
+              placeholder="New username"
+              value={accountForm.username}
+            />
+            {error ? <div className="inspector__notice error">{error}</div> : null}
+            {!error && accountStatus ? <div className="inspector__notice">{accountStatus}</div> : null}
+            <div className="dialog__actions">
+              <button className="ghost-button" disabled={busy} onClick={() => setAccountDialog(null)} type="button">
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={busy || !accountForm.username.trim()}
+                onClick={changeUsername}
+                type="button"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {accountDialog === 'password' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setAccountDialog(null)} role="presentation">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) =>
+              handleDialogEnter(
+                event,
+                changePassword,
+                Boolean(accountForm.currentPassword && accountForm.newPassword) && !busy,
+              )
+            }
+            role="dialog"
+          >
+            <div className="dialog__title">Change Password</div>
+            <input
+              autoFocus
+              onChange={(event) =>
+                setAccountForm((current) => ({ ...current, currentPassword: event.target.value }))
+              }
+              placeholder="Current password"
+              type="password"
+              value={accountForm.currentPassword}
+            />
+            <input
+              onChange={(event) => setAccountForm((current) => ({ ...current, newPassword: event.target.value }))}
+              placeholder="New password"
+              type="password"
+              value={accountForm.newPassword}
+            />
+            {error ? <div className="inspector__notice error">{error}</div> : null}
+            {!error && accountStatus ? <div className="inspector__notice">{accountStatus}</div> : null}
+            <div className="dialog__actions">
+              <button className="ghost-button" disabled={busy} onClick={() => setAccountDialog(null)} type="button">
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={busy || !accountForm.currentPassword || !accountForm.newPassword}
+                onClick={changePassword}
+                type="button"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {accountDialog === 'delete-account' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setAccountDialog(null)} role="presentation">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) =>
+              handleDialogEnter(
+                event,
+                deleteAccount,
+                accountForm.deleteConfirmation === currentUser?.username && !busy,
+              )
+            }
+            role="dialog"
+          >
+            <div className="dialog__title">Delete Account</div>
+            <div className="inspector__notice">
+              Type <strong>{currentUser?.username}</strong> to permanently delete this account.
+            </div>
+            <input
+              autoFocus
+              onChange={(event) =>
+                setAccountForm((current) => ({ ...current, deleteConfirmation: event.target.value }))
+              }
+              placeholder="Username"
+              value={accountForm.deleteConfirmation}
+            />
+            <div className="inspector__notice">Account deletion is blocked while you still own projects.</div>
+            {error ? <div className="inspector__notice error">{error}</div> : null}
+            {!error && accountStatus ? <div className="inspector__notice">{accountStatus}</div> : null}
+            <div className="dialog__actions">
+              <button className="ghost-button" disabled={busy} onClick={() => setAccountDialog(null)} type="button">
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                disabled={busy || accountForm.deleteConfirmation !== currentUser?.username}
+                onClick={deleteAccount}
+                type="button"
+              >
+                Delete Account
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showProjectDialog === 'create' ? (
         <div className="dialog-backdrop" onClick={() => setShowProjectDialog(null)} role="presentation">
           <div

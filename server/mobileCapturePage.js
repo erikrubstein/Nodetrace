@@ -218,14 +218,7 @@ export function renderMobileCapturePage() {
       let uploadMode = 'child'
       let sessionInfo = null
       let hasConnectedSession = false
-      const connectionStorageKey = 'capture-connection-id'
-      const connectionId =
-        localStorage.getItem(connectionStorageKey) ||
-        (() => {
-          const generated = Math.random().toString(36).slice(2, 10)
-          localStorage.setItem(connectionStorageKey, generated)
-          return generated
-        })()
+      const connectionId = (window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 12)).toLowerCase()
 
       function updateUrlParams() {
         const url = new URL(window.location.href)
@@ -365,6 +358,9 @@ export function renderMobileCapturePage() {
 
         try {
           sessionInfo = await api(\`/api/sessions/\${sessionId}\`)
+          if (sessionInfo?.ok === false) {
+            throw new Error(sessionInfo.error || 'Session is not active')
+          }
           await heartbeatConnection()
           hasConnectedSession = true
           setConnectedState(true)

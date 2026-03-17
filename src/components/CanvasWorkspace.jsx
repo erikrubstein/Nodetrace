@@ -263,8 +263,8 @@ export default function CanvasWorkspace({
         </div>
       ) : null}
       <div className="canvas-caption">
-        {tree?.project?.name || 'No project'} | {selectedNode ? selectedNode.name : 'No node selected'} |{' '}
-        {tree?.nodes?.length ?? 0} nodes | {Math.round(transform.scale * 100)}%
+        {selectedNode ? selectedNode.name : 'No node selected'} | {tree?.nodes?.length ?? 0} nodes |{' '}
+        {Math.round(transform.scale * 100)}%
       </div>
       {contextMenu ? (
         <div

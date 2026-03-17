@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import AccountPanel from './components/AccountPanel'
 import AppDialogs from './components/AppDialogs'
+import AuthScreen from './components/AuthScreen'
 import CameraPanel from './components/CameraPanel'
 import CanvasWorkspace from './components/CanvasWorkspace'
 import InspectorPanel from './components/InspectorPanel'
@@ -11,10 +13,9 @@ import useNodeEditing from './hooks/useNodeEditing'
 import useProjectSync from './hooks/useProjectSync'
 import useUndoRedo from './hooks/useUndoRedo'
 import useWorkspaceInteractions from './hooks/useWorkspaceInteractions'
-import { api, uploadWithProgress } from './lib/api'
-import { defaultProjectSettings } from './lib/constants'
+import { ApiError, api, uploadWithProgress } from './lib/api'
+import { defaultProjectSettings, defaultUserProjectUi } from './lib/constants'
 import { blobFromUrl, createPreviewFile } from './lib/image'
-import { getOrCreateSessionId, readStoredBoolean, readStoredNumber } from './lib/storage'
 import {
   buildClientTree,
   buildFocusPathContext,
@@ -31,13 +32,14 @@ import { getUrlState, updateUrlState } from './lib/urlState'
 
 function App() {
   const initialUrlState = useMemo(() => getUrlState(), [])
-  const desktopClientId = getOrCreateSessionId()
+  const [currentUser, setCurrentUser] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
   const [projects, setProjects] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [tree, setTree] = useState(null)
   const [selectedNodeId, setSelectedNodeId] = useState(null)
   const [multiSelectedNodeIds, setMultiSelectedNodeIds] = useState([])
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
+  const [theme, setTheme] = useState(defaultUserProjectUi.theme)
   const [status, setStatus] = useState('Loading projects...')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -58,15 +60,17 @@ function App() {
   const [dragPreview, setDragPreview] = useState(null)
   const [transform, setTransform] = useState(initialUrlState.transform)
   const [previewTransform, setPreviewTransform] = useState({ x: 0, y: 0, scale: 1 })
-  const [previewOpen, setPreviewOpen] = useState(() => readStoredBoolean('preview-open', false))
-  const [inspectorOpen, setInspectorOpen] = useState(() => readStoredBoolean('inspector-open', true))
-  const [settingsOpen, setSettingsOpen] = useState(() => readStoredBoolean('settings-open', false))
-  const [cameraOpen, setCameraOpen] = useState(() => readStoredBoolean('camera-open', false))
+  const [previewOpen, setPreviewOpen] = useState(defaultUserProjectUi.previewOpen)
+  const [inspectorOpen, setInspectorOpen] = useState(defaultUserProjectUi.inspectorOpen)
+  const [settingsOpen, setSettingsOpen] = useState(defaultUserProjectUi.settingsOpen)
+  const [cameraOpen, setCameraOpen] = useState(defaultUserProjectUi.cameraOpen)
+  const [accountOpen, setAccountOpen] = useState(defaultUserProjectUi.accountOpen)
   const [focusPathMode, setFocusPathMode] = useState(false)
-  const [previewWidth, setPreviewWidth] = useState(() => readStoredNumber('preview-width', 340))
-  const [inspectorWidth, setInspectorWidth] = useState(() => readStoredNumber('inspector-width', 320))
-  const [settingsWidth, setSettingsWidth] = useState(() => readStoredNumber('settings-width', 280))
-  const [cameraWidth, setCameraWidth] = useState(() => readStoredNumber('camera-width', 360))
+  const [previewWidth, setPreviewWidth] = useState(defaultUserProjectUi.previewWidth)
+  const [inspectorWidth, setInspectorWidth] = useState(defaultUserProjectUi.inspectorWidth)
+  const [settingsWidth, setSettingsWidth] = useState(defaultUserProjectUi.settingsWidth)
+  const [cameraWidth, setCameraWidth] = useState(defaultUserProjectUi.cameraWidth)
+  const [accountWidth, setAccountWidth] = useState(defaultUserProjectUi.accountWidth)
   const [pendingUploadParentId, setPendingUploadParentId] = useState(null)
   const [pendingUploadMode, setPendingUploadMode] = useState('child')
   const [cameraDevices, setCameraDevices] = useState([])
@@ -76,53 +80,30 @@ function App() {
   const [loadedImages, setLoadedImages] = useState({})
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false)
   const [mobileConnectionCount, setMobileConnectionCount] = useState(0)
+  const [collaboratorUsername, setCollaboratorUsername] = useState('')
+  const [accountDialog, setAccountDialog] = useState(null)
+  const [accountStatus, setAccountStatus] = useState('')
+  const [accountForm, setAccountForm] = useState({
+    username: '',
+    currentPassword: '',
+    newPassword: '',
+    deleteConfirmation: '',
+  })
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
   const pendingLocalEventsRef = useRef(0)
   const treeRef = useRef(null)
   const selectedNodeIdRef = useRef(null)
+  const loadedUiSignatureRef = useRef('')
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    localStorage.setItem('theme', theme)
   }, [theme])
 
   useEffect(() => {
     document.title = tree?.project?.name ? `Nodetrace | ${tree.project.name}` : 'Nodetrace'
   }, [tree?.project?.name])
-
-  useEffect(() => {
-    localStorage.setItem('preview-open', String(previewOpen))
-  }, [previewOpen])
-
-  useEffect(() => {
-    localStorage.setItem('inspector-open', String(inspectorOpen))
-  }, [inspectorOpen])
-
-  useEffect(() => {
-    localStorage.setItem('settings-open', String(settingsOpen))
-  }, [settingsOpen])
-
-  useEffect(() => {
-    localStorage.setItem('camera-open', String(cameraOpen))
-  }, [cameraOpen])
-
-  useEffect(() => {
-    localStorage.setItem('preview-width', String(previewWidth))
-  }, [previewWidth])
-
-  useEffect(() => {
-    localStorage.setItem('inspector-width', String(inspectorWidth))
-  }, [inspectorWidth])
-
-  useEffect(() => {
-    localStorage.setItem('settings-width', String(settingsWidth))
-  }, [settingsWidth])
-
-  useEffect(() => {
-    localStorage.setItem('camera-width', String(cameraWidth))
-  }, [cameraWidth])
 
   useEffect(() => {
     treeRef.current = tree
@@ -176,6 +157,7 @@ function App() {
 
   const selectedNode = tree?.nodes.find((node) => node.id === selectedNodeId) || null
   const projectSettings = tree?.project?.settings || defaultProjectSettings
+  const projectUi = tree?.project?.ui || defaultUserProjectUi
   const effectiveSelectedNodeIds = useMemo(
     () => [selectedNodeId, ...multiSelectedNodeIds].filter(Boolean),
     [multiSelectedNodeIds, selectedNodeId],
@@ -212,9 +194,83 @@ function App() {
   const layout = useMemo(() => buildLayout(visibleRoot, projectSettings), [projectSettings, visibleRoot])
   const contextMenuNode = tree?.nodes.find((node) => node.id === contextMenu?.nodeId) || null
 
-  const { loadProjects } = useProjectSync({
+  useEffect(() => {
+    if (!selectedProjectId || !tree?.project) {
+      return
+    }
+
+    const nextUi = {
+      theme: projectUi.theme,
+      previewOpen: projectUi.previewOpen,
+      inspectorOpen: projectUi.inspectorOpen,
+      settingsOpen: projectUi.settingsOpen,
+      cameraOpen: projectUi.cameraOpen,
+      accountOpen: projectUi.accountOpen,
+      previewWidth: projectUi.previewWidth,
+      inspectorWidth: projectUi.inspectorWidth,
+      settingsWidth: projectUi.settingsWidth,
+      cameraWidth: projectUi.cameraWidth,
+      accountWidth: projectUi.accountWidth,
+    }
+    loadedUiSignatureRef.current = JSON.stringify(nextUi)
+    setTheme(nextUi.theme)
+    setPreviewOpen(nextUi.previewOpen)
+    setInspectorOpen(nextUi.inspectorOpen)
+    setSettingsOpen(nextUi.settingsOpen)
+    setCameraOpen(nextUi.cameraOpen)
+    setAccountOpen(nextUi.accountOpen)
+    setPreviewWidth(nextUi.previewWidth)
+    setInspectorWidth(nextUi.inspectorWidth)
+    setSettingsWidth(nextUi.settingsWidth)
+    setCameraWidth(nextUi.cameraWidth)
+    setAccountWidth(nextUi.accountWidth)
+  }, [projectUi.accountOpen, projectUi.accountWidth, projectUi.cameraOpen, projectUi.cameraWidth, projectUi.inspectorOpen, projectUi.inspectorWidth, projectUi.previewOpen, projectUi.previewWidth, projectUi.settingsOpen, projectUi.settingsWidth, projectUi.theme, selectedProjectId, tree?.project])
+
+  const handleAuthLost = useCallback(() => {
+    setCurrentUser(null)
+    setAuthReady(true)
+    setProjects([])
+    setSelectedProjectId(null)
+    setTree(null)
+    setSelectedNodeId(null)
+    setMobileConnectionCount(0)
+    setAccountStatus('')
+    setAccountDialog(null)
+    setAccountForm({
+      username: '',
+      currentPassword: '',
+      newPassword: '',
+      deleteConfirmation: '',
+    })
+    setStatus('Sign in to access your projects.')
+  }, [])
+
+  const loadCurrentUser = useCallback(async () => {
+    try {
+      const payload = await api('/api/auth/me')
+      if (!payload?.authenticated || !payload.user) {
+        handleAuthLost()
+        return
+      }
+      setCurrentUser(payload.user)
+      setStatus('')
+    } finally {
+      setAuthReady(true)
+    }
+  }, [handleAuthLost])
+
+  useEffect(() => {
+    loadCurrentUser().catch((loadError) => {
+      setError(loadError.message)
+      setStatus('Unable to initialize authentication.')
+    })
+  }, [loadCurrentUser])
+
+  const { loadProjects, loadTree } = useProjectSync({
     clearHistory,
-    desktopClientId,
+    captureSessionId: currentUser?.captureSessionId || '',
+    currentUser,
+    onAuthLost: handleAuthLost,
     pendingLocalEventsRef,
     selectedNode,
     selectedNodeIdRef,
@@ -346,6 +402,77 @@ function App() {
       throw error
     }
   }
+
+  const patchProjectPreferencesRequest = useCallback(async (projectId, nextPreferences) => {
+    const rollbackLocalEvent = beginLocalEventExpectation()
+    try {
+      const updatedProject = await api(`/api/projects/${projectId}/preferences`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextPreferences),
+      })
+
+      setTree((current) => (current ? { ...current, project: updatedProject } : current))
+      setProjects((current) =>
+        current.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+      )
+      return updatedProject
+    } catch (error) {
+      rollbackLocalEvent()
+      throw error
+    }
+  }, [beginLocalEventExpectation])
+
+  useEffect(() => {
+    if (!currentUser || !selectedProjectId || !tree?.project) {
+      return undefined
+    }
+
+    const nextUi = {
+      theme,
+      previewOpen,
+      inspectorOpen,
+      settingsOpen,
+      cameraOpen,
+      accountOpen,
+      previewWidth,
+      inspectorWidth,
+      settingsWidth,
+      cameraWidth,
+      accountWidth,
+    }
+    const signature = JSON.stringify(nextUi)
+    if (signature === loadedUiSignatureRef.current) {
+      return undefined
+    }
+    loadedUiSignatureRef.current = signature
+
+    const handle = window.setTimeout(() => {
+      patchProjectPreferencesRequest(selectedProjectId, nextUi).catch((saveError) => {
+        setError(saveError.message)
+      })
+    }, 180)
+
+    return () => {
+      window.clearTimeout(handle)
+    }
+  }, [
+    cameraOpen,
+    cameraWidth,
+    accountOpen,
+    accountWidth,
+    currentUser,
+    inspectorOpen,
+    inspectorWidth,
+    patchProjectPreferencesRequest,
+    previewOpen,
+    previewWidth,
+    selectedProjectId,
+    settingsOpen,
+    settingsWidth,
+    theme,
+    tree?.project,
+  ])
 
   async function setProjectCollapsedStateRequest(projectId, collapsed) {
     const rollbackLocalEvent = beginLocalEventExpectation()
@@ -718,6 +845,75 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!error) {
+      return undefined
+    }
+
+    function clearTransientError(event) {
+      if (event.type === 'keydown') {
+        const key = event.key
+        if (key === 'Shift' || key === 'Control' || key === 'Alt' || key === 'Meta') {
+          return
+        }
+      }
+      setError('')
+    }
+
+    window.addEventListener('pointerdown', clearTransientError, true)
+    window.addEventListener('keydown', clearTransientError, true)
+
+    return () => {
+      window.removeEventListener('pointerdown', clearTransientError, true)
+      window.removeEventListener('keydown', clearTransientError, true)
+    }
+  }, [error])
+
+  async function handleAuthSubmit(endpoint, payload) {
+    setBusy(true)
+    setError('')
+    try {
+      const user = await api(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (user?.ok === false) {
+        setError(user.error || 'Request failed')
+        return
+      }
+      setCurrentUser(user)
+      setAuthReady(true)
+      await loadProjects(getUrlState().projectId)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function loginUser(payload) {
+    await handleAuthSubmit('/api/auth/login', payload)
+  }
+
+  async function registerUser(payload) {
+    await handleAuthSubmit('/api/auth/register', payload)
+  }
+
+  async function logoutUser() {
+    setBusy(true)
+    setError('')
+    setAccountStatus('')
+    try {
+      await api('/api/auth/logout', { method: 'POST' })
+      handleAuthLost()
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function createProject() {
     if (!projectName.trim()) {
       return
@@ -809,6 +1005,75 @@ function App() {
     await persistProjectSettings(defaultProjectSettings)
   }
 
+  async function addCollaborator() {
+    if (!selectedProjectId || !collaboratorUsername.trim()) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      const payload = await api(`/api/projects/${selectedProjectId}/collaborators`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: collaboratorUsername.trim().toLowerCase() }),
+      })
+      if (payload?.ok === false) {
+        setError(payload.error || 'Unable to add collaborator')
+        return
+      }
+      setTree((current) =>
+        current
+          ? {
+              ...current,
+              project: {
+                ...current.project,
+                ownerUsername: payload.owner?.username || current.project.ownerUsername,
+                collaborators: payload.collaborators || [],
+                canManageUsers: payload.canManageUsers,
+              },
+            }
+          : current,
+      )
+      setCollaboratorUsername('')
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function removeCollaborator(userId) {
+    if (!selectedProjectId || !userId) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      const payload = await api(`/api/projects/${selectedProjectId}/collaborators/${userId}`, {
+        method: 'DELETE',
+      })
+      setTree((current) =>
+        current
+          ? {
+              ...current,
+              project: {
+                ...current.project,
+                ownerUsername: payload.owner?.username || current.project.ownerUsername,
+                collaborators: payload.collaborators || [],
+                canManageUsers: payload.canManageUsers,
+              },
+            }
+          : current,
+      )
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function exportProject() {
     await downloadProjectExport(`/api/projects/${selectedProjectId}/export`, exportFileName.trim() || tree?.project?.name || 'project')
   }
@@ -830,7 +1095,7 @@ function App() {
     setTransferProgress(0)
 
     try {
-      const response = await fetch(url)
+      const response = await fetch(url, { credentials: 'same-origin' })
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}))
         throw new Error(payload.error || 'Export failed')
@@ -870,6 +1135,103 @@ function App() {
     } finally {
       setBusy(false)
       window.setTimeout(() => setTransferProgress(null), 400)
+    }
+  }
+
+  async function changeUsername() {
+    if (!accountForm.username.trim()) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    setAccountStatus('')
+    try {
+      const user = await api('/api/account/username', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: accountForm.username.trim() }),
+      })
+      if (user?.ok === false) {
+        setError(user.error || 'Unable to change username')
+        return
+      }
+      setCurrentUser(user)
+      setAccountForm((current) => ({ ...current, username: '', deleteConfirmation: '' }))
+      setAccountStatus('Username updated.')
+      setAccountDialog(null)
+      await loadProjects(selectedProjectId)
+      if (selectedProjectId) {
+        await loadTree(selectedProjectId, selectedNodeIdRef.current)
+      }
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function changePassword() {
+    if (!accountForm.currentPassword || !accountForm.newPassword) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    setAccountStatus('')
+    try {
+      const payload = await api('/api/account/password', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: accountForm.currentPassword,
+          newPassword: accountForm.newPassword,
+        }),
+      })
+      if (payload?.ok === false) {
+        setError(payload.error || 'Unable to change password')
+        return
+      }
+      setAccountForm((current) => ({ ...current, currentPassword: '', newPassword: '' }))
+      setAccountStatus('Password updated.')
+      setAccountDialog(null)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteAccount() {
+    if (accountForm.deleteConfirmation !== currentUser?.username) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    setAccountStatus('')
+    try {
+      const payload = await api('/api/account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: accountForm.deleteConfirmation }),
+      })
+      if (payload?.ok === false) {
+        setError(payload.error || 'Unable to delete account')
+        return
+      }
+      handleAuthLost()
+      setAccountDialog(null)
+      setAccountForm({
+        username: '',
+        currentPassword: '',
+        newPassword: '',
+        deleteConfirmation: '',
+      })
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -1453,6 +1815,7 @@ function App() {
     setCameraWidth,
     setDragHoverNodeId,
     setDragPreview,
+    setAccountWidth,
     setInspectorWidth,
     setPreviewTransform,
     setPreviewWidth,
@@ -1542,10 +1905,29 @@ function App() {
     }
   }
 
+  if (!authReady) {
+    return <div className="app-shell app-shell--loading" data-theme={theme}>Loading...</div>
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="app-shell app-shell--auth" data-theme={theme}>
+        <AuthScreen
+          busy={busy}
+          clearError={() => setError('')}
+          error={error}
+          onLogin={loginUser}
+          onRegister={registerUser}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell" data-theme={theme}>
       <TopBar
         busy={busy}
+        accountOpen={accountOpen}
         cameraOpen={cameraOpen}
         fileInputRef={fileInputRef}
         fitCanvasToView={fitCanvasToView}
@@ -1560,6 +1942,7 @@ function App() {
         pendingUploadParentId={pendingUploadParentId}
         previewOpen={previewOpen}
         projectName={tree?.project?.name}
+        projects={projects}
         redo={redo}
         selectedNode={selectedNode}
         selectedProjectId={selectedProjectId}
@@ -1571,6 +1954,7 @@ function App() {
         setFocusPathMode={setFocusPathMode}
         setImportArchiveFile={setImportArchiveFile}
         setImportProjectName={setImportProjectName}
+        setAccountOpen={setAccountOpen}
         setInspectorOpen={setInspectorOpen}
         setOpenMenu={setOpenMenu}
         setPreviewOpen={setPreviewOpen}
@@ -1594,6 +1978,7 @@ function App() {
             'minmax(0, 1fr)',
             inspectorOpen ? `3px ${inspectorWidth}px` : '',
             settingsOpen ? `3px ${settingsWidth}px` : '',
+            accountOpen ? `3px ${accountWidth}px` : '',
           ]
             .filter(Boolean)
             .join(' '),
@@ -1707,29 +2092,63 @@ function App() {
         ) : null}
         {settingsOpen ? (
           <SettingsPanel
+            collaboratorUsername={collaboratorUsername}
+            addCollaborator={addCollaborator}
             busy={busy}
+            canManageUsers={Boolean(tree?.project?.canManageUsers)}
+            clearError={() => setError('')}
+            collaborators={tree?.project?.collaborators || []}
+            currentUsername={currentUser?.username || ''}
+            error={error}
             onResizeStart={(event) => {
               resizeRef.current = { pointerId: event.pointerId, target: 'settings' }
               document.body.classList.add('is-resizing')
               event.preventDefault()
             }}
+            ownerUsername={tree?.project?.ownerUsername || ''}
             persistProjectSettings={persistProjectSettings}
             projectId={tree?.project?.id}
             projectSettings={projectSettings}
             resetProjectSettings={resetProjectSettings}
+            removeCollaborator={removeCollaborator}
+            setCollaboratorUsername={setCollaboratorUsername}
+          />
+        ) : null}
+        {accountOpen ? (
+          <AccountPanel
+            currentUser={currentUser}
+            openAccountDialog={(dialog) => {
+              setError('')
+              setAccountStatus('')
+              setAccountDialog(dialog)
+            }}
+            logoutUser={() => void logoutUser()}
+            onResizeStart={(event) => {
+              resizeRef.current = { pointerId: event.pointerId, target: 'account' }
+              document.body.classList.add('is-resizing')
+              event.preventDefault()
+            }}
           />
         ) : null}
       </main>
 
       <AppDialogs
+        accountDialog={accountDialog}
+        accountForm={accountForm}
+        accountStatus={accountStatus}
         bulkSelectionCount={bulkSelectionCount}
         busy={busy}
+        changePassword={changePassword}
+        changeUsername={changeUsername}
         createProject={createProject}
+        currentUser={currentUser}
         deleteNode={deleteNode}
+        deleteAccount={deleteAccount}
         deleteNodeOpen={deleteNodeOpen}
         deleteProject={deleteProject}
         deleteProjectText={deleteProjectText}
-        desktopClientId={desktopClientId}
+        desktopClientId={currentUser?.captureSessionId || ''}
+        error={error}
         exportFileName={exportFileName}
         exportMediaTree={exportMediaTree}
         exportProject={exportProject}
@@ -1747,6 +2166,8 @@ function App() {
         selectedNode={selectedNode}
         selectedProjectId={selectedProjectId}
         sessionDialogOpen={sessionDialogOpen}
+        setAccountDialog={setAccountDialog}
+        setAccountForm={setAccountForm}
         setDeleteNodeOpen={setDeleteNodeOpen}
         setDeleteProjectText={setDeleteProjectText}
         setExportFileName={setExportFileName}

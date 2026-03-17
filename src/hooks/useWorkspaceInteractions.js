@@ -9,6 +9,7 @@ export default function useWorkspaceInteractions({
   moveDraggedNode,
   selectedCameraId,
   selectedNode,
+  setAccountWidth,
   setCameraDevices,
   setCameraNotice,
   setCameraSelection,
@@ -355,6 +356,8 @@ export default function useWorkspaceInteractions({
       const nextWidth = Math.max(MIN_INSPECTOR_WIDTH, window.innerWidth - event.clientX)
       if (resizeRef.current.target === 'settings') {
         setSettingsWidth(nextWidth)
+      } else if (resizeRef.current.target === 'account') {
+        setAccountWidth(nextWidth)
       } else {
         setInspectorWidth(nextWidth)
       }
@@ -397,6 +400,7 @@ export default function useWorkspaceInteractions({
     setCameraWidth,
     setDragHoverNodeId,
     setDragPreview,
+    setAccountWidth,
     setInspectorWidth,
     setPreviewTransform,
     setPreviewWidth,
@@ -439,7 +443,7 @@ export default function useWorkspaceInteractions({
     return () => {
       element.removeEventListener('wheel', wheelListener)
     }
-  }, [setTransform])
+  }, [layout.height, layout.width, setTransform])
 
   useEffect(() => {
     const element = previewViewportRef.current
