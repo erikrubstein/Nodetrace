@@ -986,14 +986,7 @@ function sanitizeFilesystemName(name, fallback = 'item') {
 }
 
 function createUntitledName(projectId) {
-  const names = new Set(listNodeNamesByProject.all(projectId).map((row) => row.name))
-  let index = 1
-
-  while (names.has(`<untitled ${index}>`)) {
-    index += 1
-  }
-
-  return `<untitled ${index}>`
+  return 'Node'
 }
 
 function normalizeUserProjectUi(uiInput) {
