@@ -1,4 +1,5 @@
 export default function AppDialogs({
+  applyIdentificationTemplate,
   accountDialog,
   accountForm,
   accountStatus,
@@ -9,7 +10,9 @@ export default function AppDialogs({
   currentUser,
   deleteNode,
   deleteAccount,
+  deleteTemplate,
   deleteNodeOpen,
+  confirmRemoveIdentificationTemplate,
   deleteProject,
   deleteProjectText,
   desktopClientId,
@@ -19,10 +22,12 @@ export default function AppDialogs({
   exportProject,
   handleDialogEnter,
   hasBulkSelection,
+  identificationTemplates,
   importArchiveFile,
   importInputRef,
   importProject,
   importProjectName,
+  identificationTemplateRemovalNode,
   mobileConnectionCount,
   newFolderDialog,
   newFolderName,
@@ -36,19 +41,23 @@ export default function AppDialogs({
   setDeleteNodeOpen,
   setDeleteProjectText,
   setExportFileName,
+  setIdentificationTemplateRemovalNodeId,
   setImportProjectName,
   setNewFolderDialog,
   setNewFolderName,
   setSessionDialogOpen,
   setShowProjectDialog,
   setShowProjectId,
-  showProjectDialog,
   projectName,
   setProjectName,
+  showProjectDialog,
   submitNewFolder,
+  submitTemplateDialog,
   transferProgress,
   tree,
   bulkSelectionCount,
+  templateDialog,
+  setTemplateDialog,
 }) {
   return (
     <>
@@ -478,6 +487,142 @@ export default function AppDialogs({
               </button>
               <button className="danger-button" disabled={busy} onClick={deleteNode} type="button">
                 Delete Node
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {identificationTemplateRemovalNode ? (
+        <div
+          className="dialog-backdrop"
+          onClick={() => !busy && setIdentificationTemplateRemovalNodeId(null)}
+          role="presentation"
+        >
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, confirmRemoveIdentificationTemplate, !busy)}
+            role="dialog"
+          >
+            <div className="dialog__title">Remove Template</div>
+            <div className="inspector__notice">
+              Remove the template from <strong>{identificationTemplateRemovalNode.name}</strong>? This will remove all the data you entered.
+            </div>
+            <div className="dialog__actions">
+              <button
+                className="ghost-button"
+                disabled={busy}
+                onClick={() => setIdentificationTemplateRemovalNodeId(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                disabled={busy}
+                onClick={confirmRemoveIdentificationTemplate}
+                type="button"
+              >
+                Remove Template
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showProjectDialog === 'apply-template' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setShowProjectDialog(null)} role="presentation">
+          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+            <div className="dialog__title">Apply Template</div>
+            <div className="project-list">
+              {identificationTemplates.map((template) => (
+                <button
+                  key={template.id}
+                  className="project-row"
+                  disabled={busy || !selectedNode}
+                  onClick={async () => {
+                    if (!selectedNode) {
+                      return
+                    }
+                    try {
+                      await applyIdentificationTemplate(selectedNode.id, template.id)
+                      setShowProjectDialog(null)
+                    } catch {
+                      // Parent handles global error state.
+                    }
+                  }}
+                  type="button"
+                >
+                  <span>{template.name}</span>
+                  <small>{template.fields?.length || 0} fields</small>
+                </button>
+              ))}
+            </div>
+            {error ? <div className="inspector__notice error">{error}</div> : null}
+          </div>
+        </div>
+      ) : null}
+
+      {templateDialog?.mode === 'delete' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setTemplateDialog(null)} role="presentation">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, deleteTemplate, !busy)}
+            role="dialog"
+          >
+            <div className="dialog__title">Delete Template</div>
+            <div className="inspector__notice">
+              {templateDialog.affectsData ? (
+                <>
+                  Delete <strong>{templateDialog.templateName}</strong>? This will also remove data from nodes using this
+                  template.
+                </>
+              ) : (
+                <>
+                  Delete <strong>{templateDialog.templateName}</strong>? This cannot be undone.
+                </>
+              )}
+            </div>
+            {error ? <div className="inspector__notice error">{error}</div> : null}
+            <div className="dialog__actions">
+              <button className="ghost-button" disabled={busy} onClick={() => setTemplateDialog(null)} type="button">
+                Cancel
+              </button>
+              <button className="danger-button" disabled={busy} onClick={deleteTemplate} type="button">
+                Delete Template
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {templateDialog?.mode === 'confirm-save' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setTemplateDialog(null)} role="presentation">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, submitTemplateDialog, !busy)}
+            role="dialog"
+          >
+            <div className="dialog__title">Save Template</div>
+            <div className="inspector__notice">
+              Removing fields from <strong>{templateDialog.templateName}</strong> will delete data from nodes already using
+              this template.
+            </div>
+            {error ? <div className="inspector__notice error">{error}</div> : null}
+            <div className="dialog__actions">
+              <button
+                className="ghost-button"
+                disabled={busy}
+                onClick={() => setTemplateDialog(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button className="primary-button" disabled={busy} onClick={() => void submitTemplateDialog()} type="button">
+                Save
               </button>
             </div>
           </div>

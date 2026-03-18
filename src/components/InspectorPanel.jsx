@@ -1,16 +1,24 @@
+import IdentificationPanel from './IdentificationPanel'
+
 export default function InspectorPanel({
   busy,
   bulkSelectionCount,
+  clearError,
   editForm,
   editTargetNode,
   error,
   hasBulkSelection,
+  hasIdentificationTemplates,
   hasLockedSelectionRoot,
+  identification,
   nameInputRef,
+  openApplyTemplateDialog,
+  patchIdentificationField,
   saveNodeDraft,
   selectedNode,
   setDeleteNodeOpen,
   setEditForm,
+  setRemoveIdentificationNodeId,
   status,
 }) {
   const isRootNode = Boolean(selectedNode && selectedNode.parent_id == null && !selectedNode.isVariant)
@@ -39,6 +47,7 @@ export default function InspectorPanel({
       {selectedNode ? (
         <>
           <div className="inspector__section field-stack">
+            <div className="inspector__title">Details</div>
             <label>
               <span>Name</span>
               <input
@@ -51,15 +60,6 @@ export default function InspectorPanel({
             </label>
             {isRootNode ? <div className="inspector__notice">Root name follows the project name.</div> : null}
             <label>
-              <span>Tags</span>
-              <input
-                value={editForm.tags}
-                onChange={(event) => setEditForm({ ...editForm, tags: event.target.value })}
-                onBlur={() => void saveNodeDraft(editTargetNode, editForm)}
-                placeholder="front, cabinet"
-              />
-            </label>
-            <label>
               <span>Notes</span>
               <textarea
                 rows="7"
@@ -69,6 +69,18 @@ export default function InspectorPanel({
               />
             </label>
           </div>
+
+          <IdentificationPanel
+            key={`${selectedNode.id}:${selectedNode.identification?.templateId || 'none'}`}
+            busy={busy}
+            clearError={clearError}
+            hasAvailableTemplates={hasIdentificationTemplates}
+            identification={identification}
+            openApplyTemplateDialog={openApplyTemplateDialog}
+            patchIdentificationField={patchIdentificationField}
+            selectedNode={selectedNode}
+            setRemoveIdentificationNodeId={setRemoveIdentificationNodeId}
+          />
 
           <div className="inspector__section field-stack">
             {hasBulkSelection ? (

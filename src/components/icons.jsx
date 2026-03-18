@@ -50,6 +50,14 @@ export function UserIcon() {
   return <i aria-hidden="true" className="fa-solid fa-user" />
 }
 
+export function IdentificationIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-list-check" />
+}
+
+export function TemplatesIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-table-cells-large" />
+}
+
 export function GridIcon() {
   return <i aria-hidden="true" className="fa-solid fa-border-all" />
 }

@@ -54,10 +54,48 @@ const defaultUserProjectUi = {
     preview: 'left',
     camera: 'left',
     inspector: 'right',
+    templates: 'right',
     settings: 'right',
     account: 'right',
   },
 }
+
+const defaultIdentificationTemplateDefinitions = [
+  {
+    system_key: 'component-identification',
+    name: 'Component Identification',
+    fields: [
+      {
+        key: 'manufacturer',
+        label: 'Manufacturer',
+        type: 'text',
+        required: true,
+        reviewRequired: true,
+      },
+      {
+        key: 'model_number',
+        label: 'Model Number',
+        type: 'text',
+        required: true,
+        reviewRequired: true,
+      },
+      {
+        key: 'component_identifiers',
+        label: 'Component Identifiers',
+        type: 'text',
+        required: true,
+        reviewRequired: true,
+      },
+      {
+        key: 'material_description',
+        label: 'Material Description',
+        type: 'multiline',
+        required: true,
+        reviewRequired: true,
+      },
+    ],
+  },
+]
 
 function generateShortId() {
   let value = ID_FIRST_CHARS[Math.floor(Math.random() * ID_FIRST_CHARS.length)]
@@ -469,6 +507,53 @@ function ensureAuthSchema() {
 
 ensureAuthSchema()
 
+function ensureIdentificationSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS identification_templates (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      system_key TEXT,
+      name TEXT NOT NULL,
+      fields_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS identification_templates_project_system_key
+    ON identification_templates(project_id, system_key)
+    WHERE system_key IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS node_identifications (
+      node_id TEXT PRIMARY KEY,
+      template_id TEXT NOT NULL,
+      created_by_user_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(node_id) REFERENCES nodes(id),
+      FOREIGN KEY(template_id) REFERENCES identification_templates(id),
+      FOREIGN KEY(created_by_user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS node_identification_field_values (
+      node_id TEXT NOT NULL,
+      field_key TEXT NOT NULL,
+      value_json TEXT DEFAULT 'null',
+      reviewed INTEGER NOT NULL DEFAULT 0,
+      reviewed_by_user_id TEXT,
+      reviewed_at TEXT,
+      source TEXT DEFAULT 'manual',
+      ai_suggestion_json TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (node_id, field_key),
+      FOREIGN KEY(node_id) REFERENCES nodes(id),
+      FOREIGN KEY(reviewed_by_user_id) REFERENCES users(id)
+    );
+  `)
+}
+
+ensureIdentificationSchema()
+
 const insertProject = db.prepare(`
   INSERT INTO projects (id, name, description, settings_json, owner_user_id, created_at, updated_at)
   VALUES (@id, @name, @description, @settings_json, @owner_user_id, @created_at, @updated_at)
@@ -646,6 +731,132 @@ const deleteNodeCollapsePrefsByUserStmt = db.prepare(`
   DELETE FROM user_node_collapse_preferences
   WHERE user_id = ?
 `)
+const listIdentificationTemplatesByProject = db.prepare(`
+  SELECT *
+  FROM identification_templates
+  WHERE project_id = ?
+  ORDER BY created_at ASC, id ASC
+`)
+const getIdentificationTemplate = db.prepare(`SELECT * FROM identification_templates WHERE id = ?`)
+const getIdentificationTemplateByProjectAndSystemKey = db.prepare(`
+  SELECT *
+  FROM identification_templates
+  WHERE project_id = ?
+    AND system_key = ?
+`)
+const insertIdentificationTemplate = db.prepare(`
+  INSERT INTO identification_templates (id, project_id, system_key, name, fields_json, created_at, updated_at)
+  VALUES (@id, @project_id, @system_key, @name, @fields_json, @created_at, @updated_at)
+`)
+const updateIdentificationTemplateStmt = db.prepare(`
+  UPDATE identification_templates
+  SET name = @name,
+      fields_json = @fields_json,
+      updated_at = @updated_at
+  WHERE id = @id
+`)
+const deleteIdentificationTemplateStmt = db.prepare(`
+  DELETE FROM identification_templates
+  WHERE id = ?
+`)
+const deleteIdentificationTemplatesByProjectStmt = db.prepare(`
+  DELETE FROM identification_templates
+  WHERE project_id = ?
+`)
+const getNodeIdentification = db.prepare(`
+  SELECT *
+  FROM node_identifications
+  WHERE node_id = ?
+`)
+const listNodeIdentificationsByProject = db.prepare(`
+  SELECT ni.node_id, ni.template_id, ni.created_by_user_id, ni.created_at, ni.updated_at
+  FROM node_identifications ni
+  JOIN nodes n ON n.id = ni.node_id
+  WHERE n.project_id = ?
+`)
+const upsertNodeIdentification = db.prepare(`
+  INSERT INTO node_identifications (node_id, template_id, created_by_user_id, created_at, updated_at)
+  VALUES (@node_id, @template_id, @created_by_user_id, @created_at, @updated_at)
+  ON CONFLICT(node_id) DO UPDATE SET
+    template_id = excluded.template_id,
+    created_by_user_id = excluded.created_by_user_id,
+    updated_at = excluded.updated_at
+`)
+const deleteNodeIdentificationStmt = db.prepare(`
+  DELETE FROM node_identifications
+  WHERE node_id = ?
+`)
+const deleteNodeIdentificationsByProjectStmt = db.prepare(`
+  DELETE FROM node_identifications
+  WHERE node_id IN (SELECT id FROM nodes WHERE project_id = ?)
+`)
+const listNodeIdentificationFieldValuesByProject = db.prepare(`
+  SELECT niv.*
+  FROM node_identification_field_values niv
+  JOIN nodes n ON n.id = niv.node_id
+  WHERE n.project_id = ?
+`)
+const getNodeIdentificationFieldValue = db.prepare(`
+  SELECT *
+  FROM node_identification_field_values
+  WHERE node_id = ?
+    AND field_key = ?
+`)
+const upsertNodeIdentificationFieldValue = db.prepare(`
+  INSERT INTO node_identification_field_values (
+    node_id, field_key, value_json, reviewed, reviewed_by_user_id, reviewed_at, source, ai_suggestion_json, updated_at
+  ) VALUES (
+    @node_id, @field_key, @value_json, @reviewed, @reviewed_by_user_id, @reviewed_at, @source, @ai_suggestion_json, @updated_at
+  )
+  ON CONFLICT(node_id, field_key) DO UPDATE SET
+    value_json = excluded.value_json,
+    reviewed = excluded.reviewed,
+    reviewed_by_user_id = excluded.reviewed_by_user_id,
+    reviewed_at = excluded.reviewed_at,
+    source = excluded.source,
+    ai_suggestion_json = excluded.ai_suggestion_json,
+    updated_at = excluded.updated_at
+`)
+const deleteNodeIdentificationFieldValuesByNodeStmt = db.prepare(`
+  DELETE FROM node_identification_field_values
+  WHERE node_id = ?
+`)
+const deleteNodeIdentificationFieldValuesByProjectStmt = db.prepare(`
+  DELETE FROM node_identification_field_values
+  WHERE node_id IN (SELECT id FROM nodes WHERE project_id = ?)
+`)
+const deleteNodeIdentificationFieldValueStmt = db.prepare(`
+  DELETE FROM node_identification_field_values
+  WHERE node_id = ?
+    AND field_key = ?
+`)
+const deleteNodeIdentificationFieldValuesByTemplateStmt = db.prepare(`
+  DELETE FROM node_identification_field_values
+  WHERE node_id IN (
+    SELECT node_id
+    FROM node_identifications
+    WHERE template_id = ?
+  )
+`)
+const deleteNodeIdentificationsByTemplateStmt = db.prepare(`
+  DELETE FROM node_identifications
+  WHERE template_id = ?
+`)
+const countNodesUsingIdentificationTemplateStmt = db.prepare(`
+  SELECT COUNT(*) AS count
+  FROM node_identifications
+  WHERE template_id = ?
+`)
+const clearNodeIdentificationCreatorByUserStmt = db.prepare(`
+  UPDATE node_identifications
+  SET created_by_user_id = NULL
+  WHERE created_by_user_id = ?
+`)
+const clearNodeIdentificationReviewerByUserStmt = db.prepare(`
+  UPDATE node_identification_field_values
+  SET reviewed_by_user_id = NULL
+  WHERE reviewed_by_user_id = ?
+`)
 const getProjectNodes = db.prepare(`
   SELECT *
   FROM nodes
@@ -743,6 +954,8 @@ const createProjectWithRoot = db.transaction(({ name, description, owner_user_id
     updated_at: now,
   })
 
+  ensureDefaultIdentificationTemplates(projectId)
+
   return projectId
 })
 
@@ -805,6 +1018,66 @@ const updateNode = db.transaction(({ id, project_id, name, notes, tags }) => {
     updated_at: now,
   })
   updateProjectTimestamp.run(now, project_id)
+})
+
+const upsertNodeIdentificationData = db.transaction(({ nodeId, templateId, createdByUserId = null, fields = [] }) => {
+  const now = new Date().toISOString()
+  upsertNodeIdentification.run({
+    node_id: nodeId,
+    template_id: templateId,
+    created_by_user_id: createdByUserId,
+    created_at: now,
+    updated_at: now,
+  })
+  deleteNodeIdentificationFieldValuesByNodeStmt.run(nodeId)
+  for (const field of fields) {
+    upsertNodeIdentificationFieldValue.run({
+      node_id: nodeId,
+      field_key: field.key,
+      value_json: JSON.stringify(field.value ?? null),
+      reviewed: field.reviewed ? 1 : 0,
+      reviewed_by_user_id: field.reviewed ? field.reviewed_by_user_id || null : null,
+      reviewed_at: field.reviewed ? field.reviewed_at || now : null,
+      source: field.source || 'manual',
+      ai_suggestion_json: field.ai_suggestion != null ? JSON.stringify(field.ai_suggestion) : null,
+      updated_at: now,
+    })
+  }
+})
+
+const updateIdentificationTemplate = db.transaction(({ templateId, name, fields }) => {
+  const template = getIdentificationTemplate.get(templateId)
+  if (!template) {
+    const error = new Error('Identification template not found')
+    error.status = 404
+    throw error
+  }
+
+  const now = new Date().toISOString()
+  const normalizedFields = normalizeIdentificationFieldDefinitions(fields)
+  updateIdentificationTemplateStmt.run({
+    id: templateId,
+    name,
+    fields_json: JSON.stringify(normalizedFields),
+    updated_at: now,
+  })
+
+  const allowedKeys = new Set(normalizedFields.map((field) => field.key))
+  const assignments = listNodeIdentificationsByProject
+    .all(template.project_id)
+    .filter((row) => row.template_id === templateId)
+  for (const assignment of assignments) {
+    const existingRows = db
+      .prepare(`SELECT field_key FROM node_identification_field_values WHERE node_id = ?`)
+      .all(assignment.node_id)
+    for (const row of existingRows) {
+      if (!allowedKeys.has(row.field_key)) {
+        deleteNodeIdentificationFieldValueStmt.run(assignment.node_id, row.field_key)
+      }
+    }
+  }
+
+  updateProjectTimestamp.run(now, template.project_id)
 })
 
 const moveNode = db.transaction(({ id, project_id, parent_id, variant_of_id }) => {
@@ -890,6 +1163,8 @@ const deleteNodeRecursive = db.transaction((nodeId, projectId) => {
     }
 
     deleteNodeCollapsePrefsByNodeStmt.run(current.id)
+    deleteNodeIdentificationFieldValuesByNodeStmt.run(current.id)
+    deleteNodeIdentificationStmt.run(current.id)
     deleteNodeStmt.run(current.id)
   }
 
@@ -915,6 +1190,9 @@ const deleteProjectRecursive = db.transaction((projectId) => {
 
   deleteNodesByProjectStmt.run(projectId)
   deleteNodeCollapsePrefsByProjectStmt.run(projectId)
+  deleteNodeIdentificationFieldValuesByProjectStmt.run(projectId)
+  deleteNodeIdentificationsByProjectStmt.run(projectId)
+  deleteIdentificationTemplatesByProjectStmt.run(projectId)
   deleteProjectCollaboratorsStmt.run(projectId)
   deleteProjectStmt.run(projectId)
 
@@ -943,6 +1221,9 @@ const clearProjectContents = db.transaction((projectId) => {
 
   deleteNodesByProjectStmt.run(projectId)
   deleteNodeCollapsePrefsByProjectStmt.run(projectId)
+  deleteNodeIdentificationFieldValuesByProjectStmt.run(projectId)
+  deleteNodeIdentificationsByProjectStmt.run(projectId)
+  deleteIdentificationTemplatesByProjectStmt.run(projectId)
 
   const projectUploadDir = getProjectUploadDir(projectId)
   if (fs.existsSync(projectUploadDir)) {
@@ -1007,7 +1288,7 @@ function normalizeUserProjectUi(uiInput) {
 
   if ('previewOpen' in ui || 'cameraOpen' in ui || 'inspectorOpen' in ui || 'settingsOpen' in ui || 'accountOpen' in ui) {
     const oldLeftPanels = ['camera', 'preview'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
-    const oldRightPanels = ['account', 'settings', 'inspector'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
+    const oldRightPanels = ['account', 'settings', 'templates', 'inspector'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
     ui.leftSidebarOpen = oldLeftPanels.length > 0
     ui.rightSidebarOpen = oldRightPanels.length > 0
     ui.leftActivePanel = oldLeftPanels[0] || defaultUserProjectUi.leftActivePanel
@@ -1060,6 +1341,149 @@ function normalizeProjectSettings(settingsInput) {
   return settings
 }
 
+function normalizeIdentificationFieldDefinitions(fieldsInput) {
+  const fields = Array.isArray(fieldsInput) ? fieldsInput : []
+  const seen = new Set()
+  const normalized = []
+
+  for (const field of fields) {
+    const key = String(field?.key || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, '_')
+    if (!key) {
+      const error = new Error('Template field keys cannot be empty')
+      error.status = 400
+      throw error
+    }
+    if (seen.has(key)) {
+      const error = new Error(`Duplicate template field key: ${key}`)
+      error.status = 400
+      throw error
+    }
+    seen.add(key)
+
+    const type = ['text', 'multiline'].includes(field?.type) ? field.type : 'text'
+    normalized.push({
+      key,
+      label: String(field?.label || key)
+        .trim()
+        .replace(/\s+/g, ' ') || key,
+      type,
+      required: false,
+      reviewRequired: true,
+    })
+  }
+
+  return normalized
+}
+
+function normalizeIdentificationFieldValue(field, valueInput) {
+  if (field.type === 'list') {
+    const items = Array.isArray(valueInput)
+      ? valueInput
+      : String(valueInput || '')
+          .split(',')
+          .map((item) => item.trim())
+    return items.filter(Boolean)
+  }
+
+  return String(valueInput ?? '').trim()
+}
+
+function identificationFieldHasValue(field, value) {
+  if (field.type === 'list') {
+    return Array.isArray(value) && value.length > 0
+  }
+  return String(value || '').trim().length > 0
+}
+
+function serializeIdentificationTemplate(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    systemKey: row.system_key || null,
+    fields: normalizeIdentificationFieldDefinitions(JSON.parse(row.fields_json || '[]')),
+    usageCount: Number(countNodesUsingIdentificationTemplateStmt.get(row.id)?.count || 0),
+  }
+}
+
+function ensureDefaultIdentificationTemplates(projectId) {
+  for (const templateDefinition of defaultIdentificationTemplateDefinitions) {
+    const existing = getIdentificationTemplateByProjectAndSystemKey.get(projectId, templateDefinition.system_key)
+    if (existing) {
+      continue
+    }
+
+    const now = new Date().toISOString()
+    insertIdentificationTemplate.run({
+      id: generateUniqueId((candidate) => Boolean(getIdentificationTemplate.get(candidate))),
+      project_id: projectId,
+      system_key: templateDefinition.system_key,
+      name: templateDefinition.name,
+      fields_json: JSON.stringify(normalizeIdentificationFieldDefinitions(templateDefinition.fields)),
+      created_at: now,
+      updated_at: now,
+    })
+  }
+
+  return listIdentificationTemplatesByProject.all(projectId)
+}
+
+function buildNodeIdentification(nodeId, templateRowsById, identificationRowsByNodeId, fieldRowsByNodeId) {
+  const assignment = identificationRowsByNodeId.get(nodeId)
+  if (!assignment) {
+    return null
+  }
+
+  const template = templateRowsById.get(assignment.template_id)
+  if (!template) {
+    return null
+  }
+
+  const fieldValues = new Map((fieldRowsByNodeId.get(nodeId) || []).map((row) => [row.field_key, row]))
+  const fields = template.fields.map((field) => {
+    const row = fieldValues.get(field.key)
+    const parsedValue = row
+      ? normalizeIdentificationFieldValue(field, JSON.parse(row.value_json || 'null'))
+      : field.type === 'list'
+        ? []
+        : ''
+    const reviewed = Boolean(row?.reviewed)
+    const hasValue = identificationFieldHasValue(field, parsedValue)
+    return {
+      key: field.key,
+      label: field.label,
+      type: field.type,
+      required: field.required,
+      reviewRequired: field.reviewRequired,
+      value: parsedValue,
+      hasValue,
+      reviewed,
+      reviewedByUserId: row?.reviewed_by_user_id || null,
+      reviewedAt: row?.reviewed_at || null,
+      source: row?.source || 'manual',
+      aiSuggestion: row?.ai_suggestion_json ? JSON.parse(row.ai_suggestion_json) : null,
+    }
+  })
+
+  const reviewedFieldCount = fields.filter((field) => field.reviewed).length
+  const totalReviewFieldCount = fields.length
+  const missingRequiredCount = Math.max(0, totalReviewFieldCount - reviewedFieldCount)
+  const status = totalReviewFieldCount > 0 && reviewedFieldCount === totalReviewFieldCount ? 'reviewed' : 'incomplete'
+
+  return {
+    templateId: template.id,
+    templateName: template.name,
+    status,
+    requiredFieldCount: totalReviewFieldCount,
+    missingRequiredCount,
+    reviewedFieldCount,
+    totalReviewFieldCount,
+    fields,
+  }
+}
+
 function getOrCreateProjectPreferences(project, userId) {
   const existing = getUserProjectPreference.get(userId, project.id)
   if (existing) {
@@ -1086,6 +1510,7 @@ function getOrCreateProjectPreferences(project, userId) {
 }
 
 function serializeProject(row, userId) {
+  const templates = ensureDefaultIdentificationTemplates(row.id).map(serializeIdentificationTemplate)
   const preferences = userId ? getOrCreateProjectPreferences(row, userId) : {
     settings: normalizeProjectSettings(JSON.parse(row.settings_json || '{}')),
     ui: normalizeUserProjectUi({}),
@@ -1104,12 +1529,13 @@ function serializeProject(row, userId) {
     ownerUsername: row.owner_username || null,
     canManageUsers: Boolean(userId && row.owner_user_id === userId),
     collaborators,
+    identificationTemplates: templates,
     settings: preferences.settings,
     ui: preferences.ui,
   }
 }
 
-function serializeNode(row, _collapsedMap = null) {
+function serializeNode(row, _collapsedMap = null, identification = null) {
   return {
     id: row.id,
     parent_id: row.parent_id,
@@ -1123,6 +1549,7 @@ function serializeNode(row, _collapsedMap = null) {
     tags: JSON.parse(row.tags_json || '[]'),
     collapsed: false,
     isVariant: row.variant_of_id != null,
+    identification,
     hasImage: row.type === 'photo' && Boolean(row.image_path),
     imageUrl: row.image_path ? `/uploads/${row.image_path.replaceAll('\\', '/')}` : null,
     previewUrl: row.preview_path ? `/uploads/${row.preview_path.replaceAll('\\', '/')}` : null,
@@ -1133,7 +1560,25 @@ function serializeNodeForUser(row, userId) {
   if (!row) {
     return null
   }
-  const node = serializeNode(row)
+  const templateRowsById = new Map(
+    ensureDefaultIdentificationTemplates(row.project_id)
+      .map(serializeIdentificationTemplate)
+      .map((template) => [template.id, template]),
+  )
+  const identificationRowsByNodeId = new Map(
+    listNodeIdentificationsByProject.all(row.project_id).map((item) => [item.node_id, item]),
+  )
+  const fieldRowsByNodeId = new Map()
+  for (const fieldRow of listNodeIdentificationFieldValuesByProject.all(row.project_id)) {
+    const items = fieldRowsByNodeId.get(fieldRow.node_id) || []
+    items.push(fieldRow)
+    fieldRowsByNodeId.set(fieldRow.node_id, items)
+  }
+  const node = serializeNode(
+    row,
+    null,
+    buildNodeIdentification(row.id, templateRowsById, identificationRowsByNodeId, fieldRowsByNodeId),
+  )
   if (row.variant_of_id != null || !hasChildNodeStmt.get(row.id)) {
     return node
   }
@@ -1143,6 +1588,20 @@ function serializeNodeForUser(row, userId) {
 }
 
 function buildTree(project, rows, userId = null) {
+  const templateRowsById = new Map(
+    ensureDefaultIdentificationTemplates(project.id)
+      .map(serializeIdentificationTemplate)
+      .map((template) => [template.id, template]),
+  )
+  const identificationRowsByNodeId = new Map(
+    listNodeIdentificationsByProject.all(project.id).map((item) => [item.node_id, item]),
+  )
+  const fieldRowsByNodeId = new Map()
+  for (const fieldRow of listNodeIdentificationFieldValuesByProject.all(project.id)) {
+    const items = fieldRowsByNodeId.get(fieldRow.node_id) || []
+    items.push(fieldRow)
+    fieldRowsByNodeId.set(fieldRow.node_id, items)
+  }
   const collapsedMap = userId
     ? new Map(
         listUserNodeCollapsePrefsByProject
@@ -1150,7 +1609,13 @@ function buildTree(project, rows, userId = null) {
           .map((row) => [row.node_id, Boolean(row.collapsed)]),
       )
     : null
-  const nodes = rows.map((row) => serializeNode(row, collapsedMap))
+  const nodes = rows.map((row) =>
+    serializeNode(
+      row,
+      collapsedMap,
+      buildNodeIdentification(row.id, templateRowsById, identificationRowsByNodeId, fieldRowsByNodeId),
+    ),
+  )
   const byId = new Map(nodes.map((node) => [node.id, { ...node, children: [], variants: [] }]))
   let root = null
 
@@ -1272,6 +1737,16 @@ function assertNodeAccess(nodeId, userId) {
   const node = assertNode(nodeId)
   assertProjectAccess(node.project_id, userId)
   return node
+}
+
+function assertIdentificationTemplateAccess(templateId, projectId) {
+  const template = getIdentificationTemplate.get(String(templateId || '').trim())
+  if (!template || template.project_id !== projectId) {
+    const error = new Error('Identification template not found')
+    error.status = 404
+    throw error
+  }
+  return template
 }
 
 function ensureNodeBelongsToProject(node, projectId) {
@@ -1508,6 +1983,16 @@ function exportProjectMediaArchive(projectId) {
 function writeProjectManifest(project, rows, workDir) {
   const filesDir = path.join(workDir, 'files')
   fs.mkdirSync(filesDir, { recursive: true })
+  const templateRows = ensureDefaultIdentificationTemplates(project.id).map(serializeIdentificationTemplate)
+  const identificationsByNodeId = new Map(
+    listNodeIdentificationsByProject.all(project.id).map((row) => [row.node_id, row]),
+  )
+  const fieldValuesByNodeId = new Map()
+  for (const row of listNodeIdentificationFieldValuesByProject.all(project.id)) {
+    const items = fieldValuesByNodeId.get(row.node_id) || []
+    items.push(row)
+    fieldValuesByNodeId.set(row.node_id, items)
+  }
 
   const manifest = {
     version: 2,
@@ -1516,6 +2001,7 @@ function writeProjectManifest(project, rows, workDir) {
       name: project.name,
       description: project.description || '',
       settings: normalizeProjectSettings(JSON.parse(project.settings_json || '{}')),
+      identification_templates: templateRows,
     },
     nodes: rows.map((row) => {
       const imageFile = row.image_path
@@ -1532,6 +2018,17 @@ function writeProjectManifest(project, rows, workDir) {
         fs.copyFileSync(path.join(uploadsDir, row.preview_path), path.join(workDir, previewFile))
       }
 
+      const identification = identificationsByNodeId.get(row.id)
+      const identificationFields = (fieldValuesByNodeId.get(row.id) || []).map((fieldRow) => ({
+        key: fieldRow.field_key,
+        value: JSON.parse(fieldRow.value_json || 'null'),
+        reviewed: Boolean(fieldRow.reviewed),
+        reviewed_by_user_id: fieldRow.reviewed_by_user_id || null,
+        reviewed_at: fieldRow.reviewed_at || null,
+        source: fieldRow.source || 'manual',
+        ai_suggestion: fieldRow.ai_suggestion_json ? JSON.parse(fieldRow.ai_suggestion_json) : null,
+      }))
+
       return {
         id: row.id,
         parent_id: row.parent_id,
@@ -1543,6 +2040,15 @@ function writeProjectManifest(project, rows, workDir) {
         original_filename: row.original_filename,
         image_file: imageFile,
         preview_file: previewFile,
+        identification: identification
+          ? {
+              template_id: identification.template_id,
+              created_by_user_id: identification.created_by_user_id || null,
+              created_at: identification.created_at,
+              updated_at: identification.updated_at,
+              fields: identificationFields,
+            }
+          : null,
       }
     }),
   }
@@ -1582,6 +2088,26 @@ function restoreProjectFromArchive(projectId, archivePath) {
       updated_at: now,
     })
 
+    deleteIdentificationTemplatesByProjectStmt.run(projectId)
+    const templateIdMap = new Map()
+    const importedTemplates = Array.isArray(manifest.project?.identification_templates)
+      ? manifest.project.identification_templates
+      : defaultIdentificationTemplateDefinitions
+    for (const template of importedTemplates) {
+      const newTemplateId = generateUniqueId((candidate) => Boolean(getIdentificationTemplate.get(candidate)))
+      insertIdentificationTemplate.run({
+        id: newTemplateId,
+        project_id: projectId,
+        system_key: template.systemKey || template.system_key || null,
+        name: String(template.name || 'Template').trim() || 'Template',
+        fields_json: JSON.stringify(normalizeIdentificationFieldDefinitions(template.fields)),
+        created_at: now,
+        updated_at: now,
+      })
+      templateIdMap.set(String(template.id ?? template.old_id ?? template.systemKey ?? template.system_key ?? newTemplateId), newTemplateId)
+    }
+    ensureDefaultIdentificationTemplates(projectId)
+
     const rootId = generateUniqueId((candidate) => Boolean(getNode.get(candidate)))
     insertNode.run({
       id: rootId,
@@ -1601,6 +2127,17 @@ function restoreProjectFromArchive(projectId, archivePath) {
 
     const rootManifestId = String(rootRow.id ?? rootRow.old_id)
     const oldToNew = new Map([[rootManifestId, rootId]])
+    if (rootRow.identification?.template_id) {
+      const mappedTemplateId = templateIdMap.get(String(rootRow.identification.template_id))
+      if (mappedTemplateId) {
+        upsertNodeIdentificationData({
+          nodeId: rootId,
+          templateId: mappedTemplateId,
+          createdByUserId: rootRow.identification.created_by_user_id || null,
+          fields: Array.isArray(rootRow.identification.fields) ? rootRow.identification.fields : [],
+        })
+      }
+    }
     const pendingRows = importedRows.filter((row) => String(row.id ?? row.old_id) !== rootManifestId)
 
     while (pendingRows.length > 0) {
@@ -1649,6 +2186,18 @@ function restoreProjectFromArchive(projectId, archivePath) {
           preview_path: relativePreviewPath,
           original_filename: row.original_filename || null,
         })
+
+        if (row.identification?.template_id) {
+          const mappedTemplateId = templateIdMap.get(String(row.identification.template_id))
+          if (mappedTemplateId) {
+            upsertNodeIdentificationData({
+              nodeId,
+              templateId: mappedTemplateId,
+              createdByUserId: row.identification.created_by_user_id || null,
+              fields: Array.isArray(row.identification.fields) ? row.identification.fields : [],
+            })
+          }
+        }
 
         oldToNew.set(rowId, nodeId)
         pendingRows.splice(index, 1)
@@ -1746,6 +2295,18 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
         original_filename: row.original_filename || null,
       })
 
+      if (row.identification?.template_id) {
+        const template = getIdentificationTemplate.get(String(row.identification.template_id))
+        if (template && template.project_id === projectId) {
+          upsertNodeIdentificationData({
+            nodeId,
+            templateId: template.id,
+            createdByUserId: row.identification.created_by_user_id || null,
+            fields: Array.isArray(row.identification.fields) ? row.identification.fields : [],
+          })
+        }
+      }
+
       oldToNew.set(rowId, nodeId)
       pendingRows.splice(index, 1)
       importedCount += 1
@@ -1791,6 +2352,27 @@ function importProjectArchive(archivePath, projectNameOverride = '', ownerUserId
       })
     }
 
+    deleteIdentificationTemplatesByProjectStmt.run(projectId)
+    const templateIdMap = new Map()
+    const importedTemplates = Array.isArray(manifest.project?.identification_templates)
+      ? manifest.project.identification_templates
+      : defaultIdentificationTemplateDefinitions
+    const now = new Date().toISOString()
+    for (const template of importedTemplates) {
+      const newTemplateId = generateUniqueId((candidate) => Boolean(getIdentificationTemplate.get(candidate)))
+      insertIdentificationTemplate.run({
+        id: newTemplateId,
+        project_id: projectId,
+        system_key: template.systemKey || template.system_key || null,
+        name: String(template.name || 'Template').trim() || 'Template',
+        fields_json: JSON.stringify(normalizeIdentificationFieldDefinitions(template.fields)),
+        created_at: now,
+        updated_at: now,
+      })
+      templateIdMap.set(String(template.id ?? template.old_id ?? template.systemKey ?? template.system_key ?? newTemplateId), newTemplateId)
+    }
+    ensureDefaultIdentificationTemplates(projectId)
+
     const importedRows = Array.isArray(manifest.nodes) ? manifest.nodes : []
     const oldToNew = new Map()
     const createdRoot = getProjectNodes.all(projectId).find((node) => node.parent_id == null)
@@ -1811,6 +2393,17 @@ function importProjectArchive(archivePath, projectNameOverride = '', ownerUserId
     })
     const rootManifestId = String(rootRow.id ?? rootRow.old_id)
     oldToNew.set(rootManifestId, createdRoot.id)
+    if (rootRow.identification?.template_id) {
+      const mappedTemplateId = templateIdMap.get(String(rootRow.identification.template_id))
+      if (mappedTemplateId) {
+        upsertNodeIdentificationData({
+          nodeId: createdRoot.id,
+          templateId: mappedTemplateId,
+          createdByUserId: rootRow.identification.created_by_user_id || null,
+          fields: Array.isArray(rootRow.identification.fields) ? rootRow.identification.fields : [],
+        })
+      }
+    }
 
     const projectUploadDir = getProjectUploadDir(projectId)
     fs.mkdirSync(projectUploadDir, { recursive: true })
@@ -1863,6 +2456,18 @@ function importProjectArchive(archivePath, projectNameOverride = '', ownerUserId
           preview_path: relativePreviewPath,
           original_filename: row.original_filename || null,
         })
+
+        if (row.identification?.template_id) {
+          const mappedTemplateId = templateIdMap.get(String(row.identification.template_id))
+          if (mappedTemplateId) {
+            upsertNodeIdentificationData({
+              nodeId,
+              templateId: mappedTemplateId,
+              createdByUserId: row.identification.created_by_user_id || null,
+              fields: Array.isArray(row.identification.fields) ? row.identification.fields : [],
+            })
+          }
+        }
 
         oldToNew.set(String(row.id ?? row.old_id), nodeId)
         pendingRows.splice(index, 1)
@@ -2138,6 +2743,8 @@ app.delete('/api/account', requireAuth, (req, res, next) => {
       const sessions = listSessionsByUserStmt.all(req.user.id)
       deletePreferencesByUserStmt.run(req.user.id)
       deleteNodeCollapsePrefsByUserStmt.run(req.user.id)
+      clearNodeIdentificationCreatorByUserStmt.run(req.user.id)
+      clearNodeIdentificationReviewerByUserStmt.run(req.user.id)
       deleteCollaboratorsByUserStmt.run(req.user.id, req.user.id)
       deleteSessionsByUserStmt.run(req.user.id)
       deleteUserStmt.run(req.user.id)
@@ -2465,6 +3072,83 @@ app.patch('/api/projects/:id/preferences', requireAuth, (req, res, next) => {
 
     broadcastProjectEvent(projectId)
     res.json(serializeProject(assertProjectAccess(projectId, req.user.id), req.user.id))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/projects/:id/templates', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectAccess(req.params.id, req.user.id)
+    const name = String(req.body?.name || '').trim()
+    const fields = normalizeIdentificationFieldDefinitions(req.body?.fields)
+    if (!name) {
+      return res.json({ ok: false, error: 'Template name is required' })
+    }
+
+    const now = new Date().toISOString()
+    insertIdentificationTemplate.run({
+      id: generateUniqueId((candidate) => Boolean(getIdentificationTemplate.get(candidate))),
+      project_id: project.id,
+      system_key: null,
+      name,
+      fields_json: JSON.stringify(fields),
+      created_at: now,
+      updated_at: now,
+    })
+    updateProjectTimestamp.run(now, project.id)
+    broadcastProjectEvent(project.id)
+    res.json({ ok: true, tree: buildTree(assertProjectAccess(project.id, req.user.id), getProjectNodes.all(project.id), req.user.id) })
+  } catch (error) {
+    if (error?.status && error.status < 500) {
+      return res.json({ ok: false, error: error.message })
+    }
+    next(error)
+  }
+})
+
+app.patch('/api/projects/:id/templates/:templateId', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectAccess(req.params.id, req.user.id)
+    const template = assertIdentificationTemplateAccess(req.params.templateId, project.id)
+    if (template.system_key) {
+      return res.json({ ok: false, error: 'Built-in templates cannot be edited' })
+    }
+    const name = String(req.body?.name || '').trim()
+    const fields = normalizeIdentificationFieldDefinitions(req.body?.fields)
+    if (!name) {
+      return res.json({ ok: false, error: 'Template name is required' })
+    }
+
+    updateIdentificationTemplate({
+      templateId: template.id,
+      name,
+      fields,
+    })
+    broadcastProjectEvent(project.id)
+    res.json({ ok: true, tree: buildTree(assertProjectAccess(project.id, req.user.id), getProjectNodes.all(project.id), req.user.id) })
+  } catch (error) {
+    if (error?.status && error.status < 500) {
+      return res.json({ ok: false, error: error.message })
+    }
+    next(error)
+  }
+})
+
+app.delete('/api/projects/:id/templates/:templateId', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectAccess(req.params.id, req.user.id)
+    const template = assertIdentificationTemplateAccess(req.params.templateId, project.id)
+    if (template.system_key) {
+      return res.json({ ok: false, error: 'Built-in templates cannot be deleted' })
+    }
+
+    deleteNodeIdentificationFieldValuesByTemplateStmt.run(template.id)
+    deleteNodeIdentificationsByTemplateStmt.run(template.id)
+    deleteIdentificationTemplateStmt.run(template.id)
+    updateProjectTimestamp.run(new Date().toISOString(), project.id)
+    broadcastProjectEvent(project.id)
+    res.json({ ok: true, tree: buildTree(assertProjectAccess(project.id, req.user.id), getProjectNodes.all(project.id), req.user.id) })
   } catch (error) {
     next(error)
   }
@@ -2898,6 +3582,103 @@ app.patch('/api/nodes/:id', requireAuth, (req, res, next) => {
 
     broadcastProjectEvent(node.project_id)
     res.json(serializeNodeForUser(assertNode(node.id), req.user.id))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/nodes/:id/identification', requireAuth, (req, res, next) => {
+  try {
+    const node = assertNodeAccess(req.params.id, req.user.id)
+    const template = assertIdentificationTemplateAccess(req.body?.templateId, node.project_id)
+    const now = new Date().toISOString()
+    const existing = getNodeIdentification.get(node.id)
+
+    if (!existing || existing.template_id !== template.id) {
+      deleteNodeIdentificationFieldValuesByNodeStmt.run(node.id)
+    }
+
+    upsertNodeIdentification.run({
+      node_id: node.id,
+      template_id: template.id,
+      created_by_user_id: existing?.created_by_user_id || req.user.id,
+      created_at: existing?.created_at || now,
+      updated_at: now,
+    })
+
+    updateProjectTimestamp.run(now, node.project_id)
+    broadcastProjectEvent(node.project_id)
+    res.json(serializeNodeForUser(assertNode(node.id), req.user.id))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/nodes/:id/identification', requireAuth, (req, res, next) => {
+  try {
+    const node = assertNodeAccess(req.params.id, req.user.id)
+    deleteNodeIdentificationFieldValuesByNodeStmt.run(node.id)
+    deleteNodeIdentificationStmt.run(node.id)
+    updateProjectTimestamp.run(new Date().toISOString(), node.project_id)
+    broadcastProjectEvent(node.project_id)
+    res.json(serializeNodeForUser(assertNode(node.id), req.user.id))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/nodes/:id/identification/fields/:fieldKey', requireAuth, (req, res, next) => {
+  try {
+    const node = assertNodeAccess(req.params.id, req.user.id)
+    const assignment = getNodeIdentification.get(node.id)
+    if (!assignment) {
+      return res.json({ ok: false, error: 'Apply a template before editing identification fields' })
+    }
+
+    const template = assertIdentificationTemplateAccess(assignment.template_id, node.project_id)
+    const templateFields = serializeIdentificationTemplate(template).fields
+    const fieldKey = String(req.params.fieldKey || '').trim()
+    const field = templateFields.find((item) => item.key === fieldKey)
+    if (!field) {
+      return res.json({ ok: false, error: 'Identification field not found' })
+    }
+
+    const existing = getNodeIdentificationFieldValue.get(node.id, field.key)
+    const currentValue = existing
+      ? normalizeIdentificationFieldValue(field, JSON.parse(existing.value_json || 'null'))
+      : field.type === 'list'
+        ? []
+        : ''
+    const hasIncomingValue = Object.prototype.hasOwnProperty.call(req.body || {}, 'value')
+    const nextValue = hasIncomingValue
+      ? normalizeIdentificationFieldValue(field, req.body.value)
+      : currentValue
+    const valueChanged = JSON.stringify(nextValue) !== JSON.stringify(currentValue)
+    const wantsReviewed = Object.prototype.hasOwnProperty.call(req.body || {}, 'reviewed')
+      ? Boolean(req.body.reviewed)
+      : Boolean(existing?.reviewed)
+
+    upsertNodeIdentificationFieldValue.run({
+      node_id: node.id,
+      field_key: field.key,
+      value_json: JSON.stringify(nextValue),
+      reviewed: valueChanged ? 0 : wantsReviewed ? 1 : 0,
+      reviewed_by_user_id:
+        valueChanged || !wantsReviewed
+          ? null
+          : req.user.id,
+      reviewed_at:
+        valueChanged || !wantsReviewed
+          ? null
+          : new Date().toISOString(),
+      source: hasIncomingValue ? String(req.body.source || 'manual') : existing?.source || 'manual',
+      ai_suggestion_json: existing?.ai_suggestion_json || null,
+      updated_at: new Date().toISOString(),
+    })
+
+    updateProjectTimestamp.run(new Date().toISOString(), node.project_id)
+    broadcastProjectEvent(node.project_id)
+    res.json({ ok: true, node: serializeNodeForUser(assertNode(node.id), req.user.id) })
   } catch (error) {
     next(error)
   }

@@ -11,12 +11,14 @@ export default function AccountPanel({
       </div>
 
       <div className="inspector__section field-stack">
+        <div className="inspector__title">Session</div>
         <button className="ghost-button" onClick={logoutUser} type="button">
           Logout
         </button>
       </div>
 
       <div className="inspector__section field-stack">
+        <div className="inspector__title">Manage</div>
         <button className="ghost-button" onClick={() => openAccountDialog('username')} type="button">
           Change Username
         </button>

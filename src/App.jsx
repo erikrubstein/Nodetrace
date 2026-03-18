@@ -10,6 +10,7 @@ import InspectorPanel from './components/InspectorPanel'
 import PreviewPanel from './components/PreviewPanel'
 import SidebarRail from './components/SidebarRail'
 import SettingsPanel from './components/SettingsPanel'
+import TemplatesPanel from './components/TemplatesPanel'
 import TopBar from './components/TopBar'
 import useNodeEditing from './hooks/useNodeEditing'
 import useProjectSync from './hooks/useProjectSync'
@@ -35,6 +36,7 @@ import {
   CameraIcon,
   GearIcon,
   GridIcon,
+  IdentificationIcon,
   PreviewIcon,
   UserIcon,
   WrenchIcon,
@@ -56,6 +58,8 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [openMenu, setOpenMenu] = useState(null)
   const [showProjectDialog, setShowProjectDialog] = useState(null)
+  const [templateDialog, setTemplateDialog] = useState(null)
+  const [selectedTemplateEditorId, setSelectedTemplateEditorId] = useState(null)
   const [projectName, setProjectName] = useState('')
   const [newFolderDialog, setNewFolderDialog] = useState(null)
   const [newFolderName, setNewFolderName] = useState('New Folder')
@@ -65,6 +69,7 @@ function App() {
   const [transferProgress, setTransferProgress] = useState(null)
   const [deleteProjectText, setDeleteProjectText] = useState('')
   const [deleteNodeOpen, setDeleteNodeOpen] = useState(false)
+  const [identificationTemplateRemovalNodeId, setIdentificationTemplateRemovalNodeId] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
   const [sidebarContextMenu, setSidebarContextMenu] = useState(null)
   const [dragActive, setDragActive] = useState(false)
@@ -99,6 +104,10 @@ function App() {
     newPassword: '',
     deleteConfirmation: '',
   })
+  const [templateForm, setTemplateForm] = useState({
+    name: '',
+    fields: [],
+  })
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
   const pendingLocalEventsRef = useRef(0)
@@ -107,6 +116,7 @@ function App() {
   const loadedUiSignatureRef = useRef('')
   const pendingUiSignatureRef = useRef(null)
   const uiRequestSequenceRef = useRef(0)
+  const sidebarUiSignatureRef = useRef('')
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
 
   useEffect(() => {
@@ -351,6 +361,33 @@ function App() {
   )
   const layout = useMemo(() => buildLayout(visibleRoot, projectSettings), [projectSettings, visibleRoot])
   const contextMenuNode = tree?.nodes.find((node) => node.id === contextMenu?.nodeId) || null
+  const identificationTemplateRemovalNode =
+    tree?.nodes.find((node) => node.id === identificationTemplateRemovalNodeId) || null
+  const identificationTemplates = useMemo(() => tree?.project?.identificationTemplates || [], [tree?.project?.identificationTemplates])
+  const selectedTemplateEditor =
+    identificationTemplates.find((template) => template.id === selectedTemplateEditorId) || null
+  const hasTemplateChanges = useMemo(() => {
+    if (!selectedTemplateEditor) {
+      return false
+    }
+    const currentSignature = JSON.stringify({
+      name: templateForm.name,
+      fields: templateForm.fields.map((field) => ({
+        key: field.key,
+        label: field.label,
+        type: field.type,
+      })),
+    })
+    const originalSignature = JSON.stringify({
+      name: selectedTemplateEditor.name,
+      fields: (selectedTemplateEditor.fields || []).map((field) => ({
+        key: field.key,
+        label: field.label,
+        type: field.type,
+      })),
+    })
+    return currentSignature !== originalSignature
+  }, [selectedTemplateEditor, templateForm.fields, templateForm.name])
   const selectedNodePath = useMemo(
     () => compactNodePath(buildNodePath(tree?.nodes, selectedNodeId)),
     [selectedNodeId, tree?.nodes],
@@ -471,6 +508,7 @@ function App() {
     setMultiSelectedNodeIds([])
     pendingUiSignatureRef.current = null
     loadedUiSignatureRef.current = ''
+    sidebarUiSignatureRef.current = ''
   }, [selectedProjectId])
 
   useEffect(() => {
@@ -478,6 +516,54 @@ function App() {
       current.filter((nodeId) => nodeId !== selectedNodeId && tree?.nodes.some((node) => node.id === nodeId)),
     )
   }, [selectedNodeId, tree?.nodes])
+
+  useEffect(() => {
+    if (identificationTemplateRemovalNodeId && !tree?.nodes.some((node) => node.id === identificationTemplateRemovalNodeId)) {
+      setIdentificationTemplateRemovalNodeId(null)
+    }
+  }, [identificationTemplateRemovalNodeId, tree?.nodes])
+
+  useEffect(() => {
+    if (!identificationTemplates.length) {
+      setSelectedTemplateEditorId(null)
+      setTemplateForm({
+        name: '',
+        fields: [],
+      })
+      return
+    }
+
+    const currentTemplate = identificationTemplates.find((template) => template.id === selectedTemplateEditorId)
+    if (currentTemplate) {
+      if (hasTemplateChanges) {
+        return
+      }
+      setTemplateForm({
+        name: currentTemplate.name || '',
+        fields:
+          currentTemplate.fields?.map((field) => ({
+            id: `${currentTemplate.id}-${field.key}`,
+            key: field.key,
+            label: field.label,
+            type: field.type,
+          })) || [],
+      })
+      return
+    }
+
+    const firstTemplate = identificationTemplates[0]
+    setSelectedTemplateEditorId(firstTemplate.id)
+    setTemplateForm({
+      name: firstTemplate.name || '',
+      fields:
+        firstTemplate.fields?.map((field) => ({
+          id: `${firstTemplate.id}-${field.key}`,
+          key: field.key,
+          label: field.label,
+          type: field.type,
+        })) || [],
+    })
+  }, [hasTemplateChanges, identificationTemplates, selectedTemplateEditorId])
 
 
   useEffect(() => {
@@ -552,9 +638,16 @@ function App() {
         project.id === selectedProjectId
           ? { ...project, node_count: Math.max(0, Number(project.node_count || 0) + delta) }
           : project,
-      ),
+        ),
     )
   }
+
+  const applyProjectUpdate = useCallback((updatedProject) => {
+    setTree((current) => (current ? { ...current, project: updatedProject } : current))
+    setProjects((current) =>
+      current.map((project) => (project.id === updatedProject.id ? { ...project, ...updatedProject } : project)),
+    )
+  }, [])
 
   const beginLocalEventExpectation = useCallback(() => {
     pendingLocalEventsRef.current += 1
@@ -590,10 +683,7 @@ function App() {
         body: JSON.stringify(nextSettings),
       })
 
-      setTree((current) => (current ? { ...current, project: updatedProject } : current))
-      setProjects((current) =>
-        current.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
-      )
+      applyProjectUpdate(updatedProject)
       return updatedProject
     } catch (error) {
       rollbackLocalEvent()
@@ -620,16 +710,13 @@ function App() {
         return updatedProject
       }
 
-      setTree((current) => (current ? { ...current, project: updatedProject } : current))
-      setProjects((current) =>
-        current.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
-      )
+      applyProjectUpdate(updatedProject)
       return updatedProject
     } catch (error) {
       rollbackLocalEvent()
       throw error
     }
-  }, [beginLocalEventExpectation])
+  }, [applyProjectUpdate, beginLocalEventExpectation])
 
   useEffect(() => {
     if (!currentUser || !selectedProjectId || !tree?.project) {
@@ -673,6 +760,59 @@ function App() {
     resolvedLeftActivePanel,
     resolvedRightActivePanel,
     rightActivePanel,
+    rightSidebarOpen,
+    rightSidebarWidth,
+    selectedProjectId,
+    showGrid,
+    theme,
+    tree?.project,
+  ])
+
+  useEffect(() => {
+    if (!currentUser || !selectedProjectId || !tree?.project || !loadedUiSignatureRef.current) {
+      return undefined
+    }
+
+    const nextUi = {
+      theme,
+      showGrid,
+      leftSidebarOpen,
+      rightSidebarOpen,
+      leftSidebarWidth,
+      rightSidebarWidth,
+      leftActivePanel: resolvedLeftActivePanel,
+      rightActivePanel: resolvedRightActivePanel,
+      panelDock,
+    }
+    const sidebarSignature = JSON.stringify({
+      leftSidebarOpen,
+      rightSidebarOpen,
+      leftActivePanel: resolvedLeftActivePanel,
+      rightActivePanel: resolvedRightActivePanel,
+      panelDock,
+    })
+    if (sidebarSignature === sidebarUiSignatureRef.current) {
+      return undefined
+    }
+    sidebarUiSignatureRef.current = sidebarSignature
+
+    const handle = window.setTimeout(() => {
+      pendingUiSignatureRef.current = JSON.stringify(nextUi)
+      patchProjectPreferencesRequest(selectedProjectId, nextUi).catch((saveError) => {
+        pendingUiSignatureRef.current = null
+        setError(saveError.message)
+      })
+    }, 10)
+
+    return () => window.clearTimeout(handle)
+  }, [
+    currentUser,
+    leftSidebarOpen,
+    leftSidebarWidth,
+    panelDock,
+    patchProjectPreferencesRequest,
+    resolvedLeftActivePanel,
+    resolvedRightActivePanel,
     rightSidebarOpen,
     rightSidebarWidth,
     selectedProjectId,
@@ -819,6 +959,20 @@ function App() {
         original_filename: current.original_filename || null,
         image_file_key: imageFileKey,
         preview_file_key: previewFileKey,
+        identification: current.identification
+          ? {
+              template_id: current.identification.templateId,
+              fields: (current.identification.fields || []).map((field) => ({
+                key: field.key,
+                value: field.value,
+                reviewed: Boolean(field.reviewed),
+                reviewed_by_user_id: field.reviewedByUserId || null,
+                reviewed_at: field.reviewedAt || null,
+                source: field.source || 'manual',
+                ai_suggestion: field.aiSuggestion || null,
+              })),
+            }
+          : null,
       })
 
       for (const child of current.children || []) {
@@ -1142,6 +1296,360 @@ function App() {
     } finally {
       setBusy(false)
     }
+  }
+
+  async function applyIdentificationTemplateRequest(nodeId, templateId) {
+    const rollbackLocalEvent = beginLocalEventExpectation()
+    try {
+      const updatedNode = await api(`/api/nodes/${nodeId}/identification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId }),
+      })
+      applyNodeUpdate(updatedNode)
+      return updatedNode
+    } catch (error) {
+      rollbackLocalEvent()
+      throw error
+    }
+  }
+
+  async function removeIdentificationTemplateRequest(nodeId) {
+    const rollbackLocalEvent = beginLocalEventExpectation()
+    try {
+      const updatedNode = await api(`/api/nodes/${nodeId}/identification`, {
+        method: 'DELETE',
+      })
+      applyNodeUpdate(updatedNode)
+      return updatedNode
+    } catch (error) {
+      rollbackLocalEvent()
+      throw error
+    }
+  }
+
+  async function confirmRemoveIdentificationTemplate() {
+    if (!identificationTemplateRemovalNodeId) {
+      return
+    }
+    setError('')
+    setBusy(true)
+    try {
+      await removeIdentificationTemplateRequest(identificationTemplateRemovalNodeId)
+      setIdentificationTemplateRemovalNodeId(null)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function createEmptyTemplateField() {
+    return {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      key: '',
+      label: '',
+      type: 'text',
+    }
+  }
+
+  async function createOrUpdateTemplateRequest(projectId, payload, templateId = null) {
+    const response = await api(
+      templateId ? `/api/projects/${projectId}/templates/${templateId}` : `/api/projects/${projectId}/templates`,
+      {
+        method: templateId ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+    )
+    if (response?.ok === false) {
+      throw new Error(response.error || 'Unable to save template')
+    }
+    setTree(response.tree)
+    applyProjectUpdate(response.tree.project)
+    return response.tree
+  }
+
+  async function deleteTemplateRequest(projectId, templateId) {
+    const response = await api(`/api/projects/${projectId}/templates/${templateId}`, {
+      method: 'DELETE',
+    })
+    if (response?.ok === false) {
+      throw new Error(response.error || 'Unable to delete template')
+    }
+    setTree(response.tree)
+    applyProjectUpdate(response.tree.project)
+    return response.tree
+  }
+
+  async function submitTemplateDialog(modeOverride = null) {
+    const effectiveMode = modeOverride || templateDialog?.mode || 'create'
+    const effectiveTemplateId = effectiveMode === 'confirm-save' ? templateDialog?.templateId || selectedTemplateEditorId : null
+    if (!selectedProjectId || (effectiveMode === 'confirm-save' && !effectiveTemplateId)) {
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const nextTree = await createOrUpdateTemplateRequest(
+        selectedProjectId,
+        {
+          name: templateForm.name,
+          fields: templateForm.fields,
+        },
+        effectiveMode === 'confirm-save' ? effectiveTemplateId : null,
+      )
+      if (effectiveMode === 'confirm-save' && effectiveTemplateId) {
+        setSelectedTemplateEditorId(effectiveTemplateId)
+      } else if (effectiveMode === 'create') {
+        setSelectedTemplateEditorId(nextTree?.project?.identificationTemplates?.at(-1)?.id || null)
+      }
+      setTemplateDialog(null)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteTemplate() {
+    if (!selectedProjectId || !templateDialog?.templateId) {
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await deleteTemplateRequest(selectedProjectId, templateDialog.templateId)
+      setSelectedTemplateEditorId(null)
+      setTemplateDialog(null)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function patchIdentificationFieldRequest(nodeId, fieldKey, payload) {
+    const rollbackLocalEvent = beginLocalEventExpectation()
+    const currentNode = treeRef.current?.nodes?.find((node) => node.id === nodeId) || null
+    const previousNode = currentNode ? { ...currentNode, identification: currentNode.identification ? JSON.parse(JSON.stringify(currentNode.identification)) : null } : null
+    try {
+      if (currentNode?.identification) {
+        const nextFields = currentNode.identification.fields.map((field) => {
+          if (field.key !== fieldKey) {
+            return field
+          }
+          const nextValue = Object.prototype.hasOwnProperty.call(payload || {}, 'value')
+            ? field.type === 'list'
+              ? Array.isArray(payload.value)
+                ? payload.value
+                : String(payload.value || '')
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean)
+              : String(payload.value ?? '')
+            : field.value
+          const nextReviewed = Object.prototype.hasOwnProperty.call(payload || {}, 'reviewed')
+            ? Boolean(payload.reviewed)
+            : field.reviewed
+          return {
+            ...field,
+            value: nextValue,
+            reviewed: nextReviewed,
+          }
+        })
+        const reviewedFieldCount = nextFields.filter((field) => field.reviewed).length
+        const totalReviewFieldCount = nextFields.length
+        applyNodeUpdate({
+          ...currentNode,
+          identification: {
+            ...currentNode.identification,
+            fields: nextFields,
+            reviewedFieldCount,
+            totalReviewFieldCount,
+            missingRequiredCount: Math.max(0, totalReviewFieldCount - reviewedFieldCount),
+            status: totalReviewFieldCount > 0 && reviewedFieldCount === totalReviewFieldCount ? 'reviewed' : 'incomplete',
+          },
+        })
+      }
+      const response = await api(`/api/nodes/${nodeId}/identification/fields/${encodeURIComponent(fieldKey)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (response?.ok === false) {
+        throw new Error(response.error || 'Unable to update identification field')
+      }
+      applyNodeUpdate(response.node)
+      return response.node
+    } catch (error) {
+      if (previousNode) {
+        applyNodeUpdate(previousNode)
+      }
+      rollbackLocalEvent()
+      throw error
+    }
+  }
+
+  function selectTemplateEditor(templateId) {
+    const template = identificationTemplates.find((item) => item.id === templateId)
+    if (!template) {
+      return
+    }
+    setSelectedTemplateEditorId(template.id)
+    setTemplateForm({
+      name: template.name || '',
+      fields:
+        template.fields?.map((field) => ({
+          id: `${template.id}-${field.key}`,
+          key: field.key,
+          label: field.label,
+          type: field.type,
+        })) || [],
+    })
+  }
+
+  async function createNewTemplate() {
+    if (!selectedProjectId) {
+      return
+    }
+    setError('')
+    setBusy(true)
+    try {
+      const nextTree = await createOrUpdateTemplateRequest(selectedProjectId, {
+        name: 'New Template',
+        fields: [],
+      })
+      const nextTemplate = nextTree?.project?.identificationTemplates?.at(-1) || null
+      if (nextTemplate) {
+        setSelectedTemplateEditorId(nextTemplate.id)
+        setTemplateForm({
+          name: nextTemplate.name || '',
+          fields: (nextTemplate.fields || []).map((field) => ({
+            id: `${nextTemplate.id}-${field.key || Math.random().toString(36).slice(2, 8)}`,
+            key: field.key,
+            label: field.label,
+            type: field.type,
+          })),
+        })
+      }
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function duplicateTemplate() {
+    if (!selectedTemplateEditor || !selectedProjectId) {
+      return
+    }
+    setError('')
+    setBusy(true)
+    try {
+      const nextTree = await createOrUpdateTemplateRequest(selectedProjectId, {
+        name: `${selectedTemplateEditor.name} Copy`,
+        fields: templateForm.fields.map((field) => ({
+          key: field.key,
+          label: field.label,
+          type: field.type,
+        })),
+      })
+      const nextTemplate = nextTree?.project?.identificationTemplates?.at(-1) || null
+      if (nextTemplate) {
+        setSelectedTemplateEditorId(nextTemplate.id)
+        setTemplateForm({
+          name: nextTemplate.name || '',
+          fields: (nextTemplate.fields || []).map((field) => ({
+            id: `${nextTemplate.id}-${field.key || Math.random().toString(36).slice(2, 8)}`,
+            key: field.key,
+            label: field.label,
+            type: field.type,
+          })),
+        })
+      }
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function updateTemplateField(action, index = null, value = null) {
+    if (action === 'name') {
+      setTemplateForm((current) => ({ ...current, name: String(value || '') }))
+      return
+    }
+    if (action === 'add') {
+      setTemplateForm((current) => ({ ...current, fields: [...current.fields, createEmptyTemplateField()] }))
+      return
+    }
+    if (action === 'remove') {
+      setTemplateForm((current) => ({
+        ...current,
+        fields: current.fields.filter((_, currentIndex) => currentIndex !== index),
+      }))
+      return
+    }
+
+    setTemplateForm((current) => ({
+      ...current,
+      fields: current.fields.map((field, currentIndex) =>
+        currentIndex === index ? { ...field, [action]: value } : field,
+      ),
+    }))
+  }
+
+  function requestSaveTemplate() {
+    setError('')
+    if (!selectedTemplateEditor) {
+      return
+    }
+    const originalFields = (selectedTemplateEditor.fields || []).map((field) => ({
+      key: String(field.key || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
+      label: String(field.label || '').trim(),
+      type: field.type || 'text',
+    }))
+    const nextFields = templateForm.fields.map((field) => ({
+      key: String(field.key || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
+      label: String(field.label || '').trim(),
+      type: field.type || 'text',
+    }))
+    const modifiesExistingField = originalFields.some((field, index) => {
+      const nextField = nextFields[index]
+      if (!nextField) {
+        return true
+      }
+      return field.key !== nextField.key || field.label !== nextField.label || field.type !== nextField.type
+    })
+    const affectsData = Number(selectedTemplateEditor.usageCount || 0) > 0 && modifiesExistingField
+    if (!affectsData) {
+      void submitTemplateDialog('confirm-save')
+      return
+    }
+    setTemplateDialog({
+      mode: 'confirm-save',
+      templateId: selectedTemplateEditor.id,
+      templateName: selectedTemplateEditor.name,
+      usageCount: Number(selectedTemplateEditor.usageCount || 0),
+      systemKey: selectedTemplateEditor.systemKey || null,
+      affectsData: true,
+    })
+  }
+
+  function requestDeleteTemplate() {
+    if (!selectedTemplateEditor || selectedTemplateEditor.systemKey) {
+      return
+    }
+    setError('')
+    setTemplateDialog({
+      mode: 'delete',
+      templateId: selectedTemplateEditor.id,
+      templateName: selectedTemplateEditor.name,
+      usageCount: Number(selectedTemplateEditor.usageCount || 0),
+      systemKey: selectedTemplateEditor.systemKey || null,
+      affectsData: Number(selectedTemplateEditor.usageCount || 0) > 0,
+    })
   }
 
   async function renameProject() {
@@ -2147,17 +2655,48 @@ function App() {
           <InspectorPanel
             busy={busy}
             bulkSelectionCount={bulkSelectionCount}
+            clearError={() => setError('')}
             editForm={editForm}
             editTargetNode={editTargetNode}
             error={error}
             hasBulkSelection={hasBulkSelection}
+            hasIdentificationTemplates={identificationTemplates.length > 0}
             hasLockedSelectionRoot={hasLockedSelectionRoot}
+            identification={selectedNode?.identification || null}
             nameInputRef={nameInputRef}
+            openApplyTemplateDialog={() => {
+              setError('')
+              setShowProjectDialog('apply-template')
+            }}
+            patchIdentificationField={patchIdentificationFieldRequest}
             saveNodeDraft={saveNodeDraft}
             selectedNode={selectedNode}
             setDeleteNodeOpen={setDeleteNodeOpen}
             setEditForm={setEditForm}
+            setRemoveIdentificationNodeId={setIdentificationTemplateRemovalNodeId}
             status={status}
+          />
+        ),
+      },
+      templates: {
+        id: 'templates',
+        title: 'Templates',
+        icon: <IdentificationIcon />,
+        content: (
+          <TemplatesPanel
+            busy={busy}
+            clearError={() => setError('')}
+            createNewTemplate={createNewTemplate}
+            duplicateTemplate={duplicateTemplate}
+            hasTemplateChanges={hasTemplateChanges}
+            error={error}
+            requestDeleteTemplate={requestDeleteTemplate}
+            requestSaveTemplate={requestSaveTemplate}
+            selectedTemplateEditorId={selectedTemplateEditorId}
+            selectTemplateEditor={selectTemplateEditor}
+            templateForm={templateForm}
+            templates={identificationTemplates}
+            updateTemplateField={updateTemplateField}
           />
         ),
       },
@@ -2229,7 +2768,6 @@ function App() {
       </div>
     )
   }
-
   return (
     <div
       className="app-shell"
@@ -2404,6 +2942,7 @@ function App() {
       ) : null}
 
       <AppDialogs
+        applyIdentificationTemplate={applyIdentificationTemplateRequest}
         accountDialog={accountDialog}
         accountForm={accountForm}
         accountStatus={accountStatus}
@@ -2411,10 +2950,12 @@ function App() {
         busy={busy}
         changePassword={changePassword}
         changeUsername={changeUsername}
+        confirmRemoveIdentificationTemplate={confirmRemoveIdentificationTemplate}
         createProject={createProject}
         currentUser={currentUser}
         deleteNode={deleteNode}
         deleteAccount={deleteAccount}
+        deleteTemplate={deleteTemplate}
         deleteNodeOpen={deleteNodeOpen}
         deleteProject={deleteProject}
         deleteProjectText={deleteProjectText}
@@ -2425,10 +2966,12 @@ function App() {
         exportProject={exportProject}
         handleDialogEnter={handleDialogEnter}
         hasBulkSelection={hasBulkSelection}
+        identificationTemplates={identificationTemplates}
         importArchiveFile={importArchiveFile}
         importInputRef={importInputRef}
         importProject={importProject}
         importProjectName={importProjectName}
+        identificationTemplateRemovalNode={identificationTemplateRemovalNode}
         mobileConnectionCount={mobileConnectionCount}
         newFolderDialog={newFolderDialog}
         newFolderName={newFolderName}
@@ -2443,6 +2986,7 @@ function App() {
         setDeleteNodeOpen={setDeleteNodeOpen}
         setDeleteProjectText={setDeleteProjectText}
         setExportFileName={setExportFileName}
+        setIdentificationTemplateRemovalNodeId={setIdentificationTemplateRemovalNodeId}
         setImportProjectName={setImportProjectName}
         setNewFolderDialog={setNewFolderDialog}
         setNewFolderName={setNewFolderName}
@@ -2450,8 +2994,11 @@ function App() {
         setSessionDialogOpen={setSessionDialogOpen}
         setShowProjectDialog={setShowProjectDialog}
         setShowProjectId={setSelectedProjectId}
+        setTemplateDialog={setTemplateDialog}
         showProjectDialog={showProjectDialog}
         submitNewFolder={submitNewFolder}
+        submitTemplateDialog={submitTemplateDialog}
+        templateDialog={templateDialog}
         transferProgress={transferProgress}
         tree={tree}
       />
