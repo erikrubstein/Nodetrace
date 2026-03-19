@@ -82,6 +82,7 @@ const defaultProjectSettings = {
 const defaultUserProjectUi = {
   theme: 'dark',
   showGrid: true,
+  canvasTransform: null,
   leftSidebarOpen: false,
   rightSidebarOpen: true,
   leftSidebarWidth: 340,
@@ -329,6 +330,7 @@ function createTextSchema() {
     CREATE TABLE IF NOT EXISTS nodes (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
+      owner_user_id TEXT,
       parent_id TEXT,
       variant_of_id TEXT,
       type TEXT NOT NULL CHECK(type IN ('folder', 'photo')),
@@ -342,6 +344,7 @@ function createTextSchema() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(project_id) REFERENCES projects(id),
+      FOREIGN KEY(owner_user_id) REFERENCES users(id),
       FOREIGN KEY(parent_id) REFERENCES nodes(id),
       FOREIGN KEY(variant_of_id) REFERENCES nodes(id)
     );
@@ -436,6 +439,7 @@ function ensureTextIdSchema() {
       CREATE TABLE nodes_new (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
+        owner_user_id TEXT,
         parent_id TEXT,
         variant_of_id TEXT,
         type TEXT NOT NULL CHECK(type IN ('folder', 'photo')),
@@ -449,6 +453,7 @@ function ensureTextIdSchema() {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(project_id) REFERENCES projects_new(id),
+        FOREIGN KEY(owner_user_id) REFERENCES users(id),
         FOREIGN KEY(parent_id) REFERENCES nodes_new(id),
         FOREIGN KEY(variant_of_id) REFERENCES nodes_new(id)
       );
@@ -460,10 +465,10 @@ function ensureTextIdSchema() {
     `)
     const insertNodeRow = db.prepare(`
       INSERT INTO nodes_new (
-        id, project_id, parent_id, variant_of_id, type, name, notes, tags_json,
+        id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json,
         image_edits_json, image_path, preview_path, original_filename, created_at, updated_at
       ) VALUES (
-        @id, @project_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json,
+        @id, @project_id, @owner_user_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json,
         @image_edits_json, @image_path, @preview_path, @original_filename, @created_at, @updated_at
       )
     `)
@@ -485,6 +490,7 @@ function ensureTextIdSchema() {
       insertNodeRow.run({
         id: nodeIdMap.get(row.id),
         project_id: projectIdMap.get(row.project_id),
+        owner_user_id: row.owner_user_id || null,
         parent_id: row.parent_id != null ? nodeIdMap.get(row.parent_id) : null,
         variant_of_id: row.variant_of_id != null ? nodeIdMap.get(row.variant_of_id) : null,
         type: row.type,
@@ -533,6 +539,7 @@ function ensureCollapseSchemaCleanup() {
       CREATE TABLE nodes_clean (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
+        owner_user_id TEXT,
         parent_id TEXT,
         variant_of_id TEXT,
         type TEXT NOT NULL CHECK(type IN ('folder', 'photo')),
@@ -546,16 +553,17 @@ function ensureCollapseSchemaCleanup() {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(project_id) REFERENCES projects(id),
+        FOREIGN KEY(owner_user_id) REFERENCES users(id),
         FOREIGN KEY(parent_id) REFERENCES nodes_clean(id),
         FOREIGN KEY(variant_of_id) REFERENCES nodes_clean(id)
       );
 
       INSERT INTO nodes_clean (
-        id, project_id, parent_id, variant_of_id, type, name, notes, tags_json,
+        id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json,
         image_edits_json, image_path, preview_path, original_filename, created_at, updated_at
       )
       SELECT
-        id, project_id, parent_id, variant_of_id, type, name, notes, tags_json,
+        id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json,
         COALESCE(image_edits_json, '{}'), image_path, preview_path, original_filename, created_at, updated_at
       FROM nodes;
 
@@ -653,6 +661,25 @@ function ensureAuthSchema() {
 
 ensureAuthSchema()
 
+function ensureNodeOwnerSchema() {
+  const nodeColumns = db.prepare(`PRAGMA table_info(nodes)`).all()
+  if (!nodeColumns.some((column) => column.name === 'owner_user_id')) {
+    db.exec(`ALTER TABLE nodes ADD COLUMN owner_user_id TEXT`)
+  }
+
+  db.exec(`
+    UPDATE nodes
+    SET owner_user_id = (
+      SELECT owner_user_id
+      FROM projects
+      WHERE projects.id = nodes.project_id
+    )
+    WHERE owner_user_id IS NULL
+  `)
+}
+
+ensureNodeOwnerSchema()
+
 function ensureIdentificationSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS identification_templates (
@@ -725,10 +752,10 @@ const insertProject = db.prepare(`
 
 const insertNode = db.prepare(`
   INSERT INTO nodes (
-    id, project_id, parent_id, variant_of_id, type, name, notes, tags_json, image_path, preview_path,
+    id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json, image_path, preview_path,
     image_edits_json, original_filename, created_at, updated_at
   ) VALUES (
-    @id, @project_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json, @image_path, @preview_path,
+    @id, @project_id, @owner_user_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json, @image_path, @preview_path,
     @image_edits_json, @original_filename, @created_at, @updated_at
   )
 `)
@@ -1024,16 +1051,36 @@ const clearNodeIdentificationReviewerByUserStmt = db.prepare(`
   SET reviewed_by_user_id = NULL
   WHERE reviewed_by_user_id = ?
 `)
+const reassignNodeOwnersByUserStmt = db.prepare(`
+  UPDATE nodes
+  SET owner_user_id = (
+    SELECT owner_user_id
+    FROM projects
+    WHERE projects.id = nodes.project_id
+  )
+  WHERE owner_user_id = ?
+`)
 const getProjectNodes = db.prepare(`
-  SELECT *
-  FROM nodes
-  WHERE project_id = ?
+  SELECT n.*, owner.username AS owner_username
+  FROM nodes n
+  LEFT JOIN users owner ON owner.id = n.owner_user_id
+  WHERE n.project_id = ?
   ORDER BY COALESCE(parent_id, ''), type, name, id
 `)
 const deleteProjectStmt = db.prepare(`DELETE FROM projects WHERE id = ?`)
 const deleteNodesByProjectStmt = db.prepare(`DELETE FROM nodes WHERE project_id = ?`)
-const getNode = db.prepare(`SELECT * FROM nodes WHERE id = ?`)
-const getNodesByProject = db.prepare(`SELECT * FROM nodes WHERE project_id = ?`)
+const getNode = db.prepare(`
+  SELECT n.*, owner.username AS owner_username
+  FROM nodes n
+  LEFT JOIN users owner ON owner.id = n.owner_user_id
+  WHERE n.id = ?
+`)
+const getNodesByProject = db.prepare(`
+  SELECT n.*, owner.username AS owner_username
+  FROM nodes n
+  LEFT JOIN users owner ON owner.id = n.owner_user_id
+  WHERE n.project_id = ?
+`)
 const hasChildNodeStmt = db.prepare(`
   SELECT 1
   FROM nodes
@@ -1120,6 +1167,7 @@ const createProjectWithRoot = db.transaction(({ name, description, owner_user_id
   insertNode.run({
     id: generateUniqueId((candidate) => Boolean(getNode.get(candidate))),
     project_id: projectId,
+    owner_user_id: owner_user_id || null,
     parent_id: null,
     type: 'folder',
     name,
@@ -1187,9 +1235,15 @@ const updateProjectOpenAiKey = db.transaction(({ id, encryptedKey, keyMask }) =>
 const createNode = db.transaction((payload) => {
   const now = new Date().toISOString()
   const nodeId = payload.id || generateUniqueId((candidate) => Boolean(getNode.get(candidate)))
+  const project = getProject.get(payload.project_id)
+  const resolvedOwnerUserId =
+    payload.owner_user_id && getUserById.get(payload.owner_user_id)
+      ? payload.owner_user_id
+      : project?.owner_user_id ?? null
   insertNode.run({
     id: nodeId,
     ...payload,
+    owner_user_id: resolvedOwnerUserId,
     created_at: now,
     updated_at: now,
     tags_json: JSON.stringify(payload.tags),
@@ -1517,6 +1571,21 @@ function normalizeUserProjectUi(uiInput) {
 
   ui.theme = ui.theme === 'light' ? 'light' : 'dark'
   ui.showGrid = ui.showGrid !== false
+  if (
+    ui.canvasTransform &&
+    typeof ui.canvasTransform === 'object' &&
+    Number.isFinite(Number(ui.canvasTransform.x)) &&
+    Number.isFinite(Number(ui.canvasTransform.y)) &&
+    Number.isFinite(Number(ui.canvasTransform.scale))
+  ) {
+    ui.canvasTransform = {
+      x: Number(ui.canvasTransform.x),
+      y: Number(ui.canvasTransform.y),
+      scale: Math.max(0.1, Math.min(10, Number(ui.canvasTransform.scale))),
+    }
+  } else {
+    ui.canvasTransform = null
+  }
   const panelDock = {
     ...defaultUserProjectUi.panelDock,
     ...(ui.panelDock || {}),
@@ -1526,7 +1595,22 @@ function normalizeUserProjectUi(uiInput) {
   }
   ui.panelDock = panelDock
 
-  if ('previewOpen' in ui || 'cameraOpen' in ui || 'inspectorOpen' in ui || 'settingsOpen' in ui || 'accountOpen' in ui) {
+  const hasLegacyPanelFlags =
+    'previewOpen' in ui ||
+    'cameraOpen' in ui ||
+    'inspectorOpen' in ui ||
+    'settingsOpen' in ui ||
+    'accountOpen' in ui
+  const hasExplicitSidebarState =
+    'leftSidebarOpen' in ui ||
+    'rightSidebarOpen' in ui ||
+    'leftActivePanel' in ui ||
+    'rightActivePanel' in ui ||
+    'leftSidebarWidth' in ui ||
+    'rightSidebarWidth' in ui ||
+    'panelDock' in ui
+
+  if (hasLegacyPanelFlags && !hasExplicitSidebarState) {
     const oldLeftPanels = ['camera', 'preview'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
     const oldRightPanels = ['account', 'settings', 'templates', 'fields', 'inspector'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
     ui.leftSidebarOpen = oldLeftPanels.length > 0
@@ -2186,6 +2270,8 @@ function serializeProject(row, userId) {
 function serializeNode(row, _collapsedMap = null, identification = null) {
   return {
     id: row.id,
+    ownerUserId: row.owner_user_id || null,
+    ownerUsername: row.owner_username || null,
     parent_id: row.parent_id,
     variant_of_id: row.variant_of_id,
     type: row.type,
@@ -2680,6 +2766,7 @@ function writeProjectManifest(project, rows, workDir) {
 
       return {
         id: row.id,
+        owner_user_id: row.owner_user_id || null,
         parent_id: row.parent_id,
         variant_of_id: row.variant_of_id,
         type: row.type,
@@ -2765,6 +2852,10 @@ function restoreProjectFromArchive(projectId, archivePath) {
     insertNode.run({
       id: rootId,
       project_id: projectId,
+      owner_user_id:
+        rootRow.owner_user_id && getUserById.get(rootRow.owner_user_id)
+          ? rootRow.owner_user_id
+          : assertProject(projectId).owner_user_id || null,
       parent_id: null,
       variant_of_id: null,
       type: 'folder',
@@ -2830,6 +2921,7 @@ function restoreProjectFromArchive(projectId, archivePath) {
 
         const nodeId = createNode({
           project_id: projectId,
+          owner_user_id: row.owner_user_id || assertProject(projectId).owner_user_id || null,
           parent_id: parentId,
           variant_of_id: variantOfId,
           type: row.type === 'photo' ? 'photo' : 'folder',
@@ -2939,6 +3031,7 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
 
       const nodeId = createNode({
         project_id: projectId,
+        owner_user_id: row.owner_user_id || assertProject(projectId).owner_user_id || null,
         parent_id: parentId,
         variant_of_id: variantOfId,
         type: row.type === 'photo' ? 'photo' : 'folder',
@@ -3106,6 +3199,7 @@ function importProjectArchive(archivePath, projectNameOverride = '', ownerUserId
 
         const nodeId = createNode({
           project_id: projectId,
+          owner_user_id: row.owner_user_id || ownerUserId || null,
           parent_id: parentId,
           variant_of_id: variantOfId,
           type: row.type === 'photo' ? 'photo' : 'folder',
@@ -3404,6 +3498,7 @@ app.delete('/api/account', requireAuth, (req, res, next) => {
       const sessions = listSessionsByUserStmt.all(req.user.id)
       deletePreferencesByUserStmt.run(req.user.id)
       deleteNodeCollapsePrefsByUserStmt.run(req.user.id)
+      reassignNodeOwnersByUserStmt.run(req.user.id)
       clearNodeIdentificationCreatorByUserStmt.run(req.user.id)
       clearNodeIdentificationReviewerByUserStmt.run(req.user.id)
       deleteCollaboratorsByUserStmt.run(req.user.id, req.user.id)
@@ -3518,6 +3613,8 @@ app.patch('/api/projects/:id/clients/:clientId', requireAuth, (req, res, next) =
     activeDesktopSessions.set(clientId, {
       id: clientId,
       name: name || `Session ${clientId}`,
+      userId: req.user.id,
+      username: req.user.username,
       projectId,
       projectName: project.name,
       selectedNodeId,
@@ -3569,6 +3666,8 @@ app.patch('/api/sessions/:sessionId', requireAuth, (req, res, next) => {
     activeDesktopSessions.set(sessionId, {
       id: sessionId,
       name: `Session ${sessionId}`,
+      userId: req.user.id,
+      username: req.user.username,
       projectId,
       projectName: project.name,
       selectedNodeId,
@@ -4122,6 +4221,7 @@ app.post('/api/projects/:id/folders', requireAuth, (req, res, next) => {
 
     const nodeId = createNode({
       project_id: projectId,
+      owner_user_id: req.user.id,
       parent_id: parentNode.id,
       variant_of_id: null,
       type: 'folder',
@@ -4195,6 +4295,7 @@ app.post('/api/projects/:id/photos', requireAuth, upload.fields([{ name: 'file',
       requestedName && requestedName !== '<untitled>' ? requestedName : createUntitledName(projectId)
     const nodeId = createNode({
       project_id: projectId,
+      owner_user_id: req.user.id,
       parent_id: parentNode?.id ?? null,
       variant_of_id: variantOfId,
       type: 'photo',
@@ -4254,6 +4355,7 @@ app.post('/api/sessions/:sessionId/photos', upload.fields([{ name: 'file', maxCo
       requestedName && requestedName !== '<untitled>' ? requestedName : createUntitledName(projectId)
     const nodeId = createNode({
       project_id: projectId,
+      owner_user_id: session.userId || project.owner_user_id || null,
       parent_id: parentNode?.id ?? null,
       variant_of_id: variantOfId,
       type: 'photo',

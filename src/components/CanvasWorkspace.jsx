@@ -1,5 +1,5 @@
 import IconButton from './IconButton'
-import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, FitViewIcon, FolderIcon, GridIcon } from './icons'
+import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, FitViewIcon, FocusNodeIcon, FolderIcon, GridIcon } from './icons'
 
 export default function CanvasWorkspace({
   beginNodeDrag,
@@ -15,6 +15,7 @@ export default function CanvasWorkspace({
   editForm,
   editTargetNode,
   fileInputRef,
+  focusSelectedNode,
   fitCanvasToView,
   focusPathMode,
   handleCanvasPointerMove,
@@ -99,6 +100,15 @@ export default function CanvasWorkspace({
           <FitViewIcon />
         </IconButton>
         <IconButton
+          aria-label="Focus selected node"
+          className="canvas-tool-button"
+          disabled={!selectedNode || busy}
+          onClick={focusSelectedNode}
+          tooltip="Focus Selected"
+        >
+          <FocusNodeIcon />
+        </IconButton>
+        <IconButton
           aria-label="Add folder"
           className="canvas-tool-button"
           disabled={!selectedNode || selectedNode.isVariant || busy}
@@ -171,6 +181,7 @@ export default function CanvasWorkspace({
         {layout.nodes.map((item) => (
           <button
             key={item.id}
+            data-node-id={item.id}
             className={`graph-node ${selectedNodeId === item.id ? 'selected' : ''} ${
               multiSelectedNodeIds.includes(item.id) ? 'selected-secondary' : ''
             } ${

@@ -112,6 +112,10 @@ export default function InspectorPanel({
 
           <div className="inspector__section inspector__footer">
             <div className="settings-panel__meta-row">
+              <span>Node Owner</span>
+              <strong>{selectedNode.ownerUsername || 'Unknown'}</strong>
+            </div>
+            <div className="settings-panel__meta-row">
               <span>Node ID</span>
               <strong>{selectedNode.id}</strong>
             </div>

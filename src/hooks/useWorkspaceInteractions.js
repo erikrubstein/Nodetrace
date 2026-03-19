@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { getContainedRect } from '../lib/image'
 import { MIN_INSPECTOR_WIDTH, NODE_HEIGHT, NODE_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/constants'
+import { debugLog } from '../lib/debug'
 
 export default function useWorkspaceInteractions({
   cameraVisible,
@@ -137,6 +138,54 @@ export default function useWorkspaceInteractions({
       x: (rect.width - scaledWidth) / 2,
       y: (rect.height - scaledHeight) / 2,
     })
+  }
+
+  function focusSelectedNode() {
+    const viewport = viewportRef.current
+    const selectedNodeId = selectedNode?.id
+    if (!viewport || !selectedNodeId) {
+      debugLog('focusSelectedNode aborted', {
+        hasViewport: Boolean(viewport),
+        selectedNodeId,
+      })
+      return
+    }
+
+    const rect = viewport.getBoundingClientRect()
+    const nodeElement = viewport.querySelector(`[data-node-id="${selectedNodeId}"]`)
+    const nodeRect = nodeElement?.getBoundingClientRect()
+    if (!nodeRect) {
+      debugLog('focusSelectedNode missing node rect', {
+        selectedNodeId,
+        nodeFound: Boolean(nodeElement),
+      })
+      return
+    }
+
+    const scale = 2
+    const nodeCenterViewportX = nodeRect.left - rect.left + nodeRect.width / 2
+    const nodeCenterViewportY = nodeRect.top - rect.top + nodeRect.height / 2
+    const nodeCenterWorldX = (nodeCenterViewportX - transform.x) / Math.max(0.001, transform.scale)
+    const nodeCenterWorldY = (nodeCenterViewportY - transform.y) / Math.max(0.001, transform.scale)
+
+    const nextTransform = {
+      scale,
+      x: rect.width / 2 - nodeCenterWorldX * scale,
+      y: rect.height / 2 - nodeCenterWorldY * scale,
+    }
+    debugLog('focusSelectedNode applying transform', {
+      selectedNodeId,
+      currentTransform: transform,
+      nextTransform,
+      viewportRect: { width: rect.width, height: rect.height },
+      nodeRect: {
+        left: nodeRect.left - rect.left,
+        top: nodeRect.top - rect.top,
+        width: nodeRect.width,
+        height: nodeRect.height,
+      },
+    })
+    setTransform(nextTransform)
   }
 
   function beginCameraSelection(event) {
@@ -539,6 +588,7 @@ export default function useWorkspaceInteractions({
     cameraVideoRef,
     cameraViewportRef,
     captureFullCameraFrame,
+    focusSelectedNode,
     fitCanvasToView,
     handleCanvasPointerMove,
     previewViewportRef,

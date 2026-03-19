@@ -33,6 +33,7 @@ import {
   getSelectionRootIds,
 } from './lib/tree'
 import { getUrlState, updateUrlState } from './lib/urlState'
+import { debugEnabled, debugLog } from './lib/debug'
 import {
   CameraIcon,
   GearIcon,
@@ -45,7 +46,6 @@ import {
 } from './components/icons'
 
 function App() {
-  const initialUrlState = useMemo(() => getUrlState(), [])
   const [currentUser, setCurrentUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [projects, setProjects] = useState([])
@@ -78,13 +78,14 @@ function App() {
   const [dragActive, setDragActive] = useState(false)
   const [dragHoverNodeId, setDragHoverNodeId] = useState(null)
   const [dragPreview, setDragPreview] = useState(null)
-  const [transform, setTransform] = useState(initialUrlState.transform)
+  const [transform, setTransform] = useState({ x: 80, y: 80, scale: 1 })
   const [previewTransform, setPreviewTransform] = useState({ x: 0, y: 0, scale: 1 })
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(defaultUserProjectUi.leftSidebarOpen)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(defaultUserProjectUi.rightSidebarOpen)
   const [leftActivePanel, setLeftActivePanel] = useState(defaultUserProjectUi.leftActivePanel)
   const [rightActivePanel, setRightActivePanel] = useState(defaultUserProjectUi.rightActivePanel)
   const [panelDock, setPanelDock] = useState(defaultUserProjectUi.panelDock)
+  const [projectUiReady, setProjectUiReady] = useState(false)
   const [focusPathMode, setFocusPathMode] = useState(false)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(defaultUserProjectUi.leftSidebarWidth)
   const [rightSidebarWidth, setRightSidebarWidth] = useState(defaultUserProjectUi.rightSidebarWidth)
@@ -118,6 +119,7 @@ function App() {
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
   const pendingLocalEventsRef = useRef(0)
+  const pendingInitialCanvasFitRef = useRef(false)
   const treeRef = useRef(null)
   const selectedNodeIdRef = useRef(null)
   const nodeImageEditSequenceRef = useRef(new Map())
@@ -141,7 +143,15 @@ function App() {
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId
+    debugLog('selected node changed', { selectedNodeId })
   }, [selectedNodeId])
+
+  useEffect(() => {
+    if (!debugEnabled()) {
+      return
+    }
+    debugLog('canvas transform changed', { transform })
+  }, [transform])
 
   useEffect(() => {
     const activeUrls = new Set(
@@ -220,6 +230,7 @@ function App() {
     const nextUi = {
       theme: overrides.theme ?? theme,
       showGrid: overrides.showGrid ?? showGrid,
+      canvasTransform: overrides.canvasTransform ?? transform,
       leftSidebarOpen: overrides.leftSidebarOpen ?? leftSidebarOpen,
       rightSidebarOpen: overrides.rightSidebarOpen ?? rightSidebarOpen,
       leftSidebarWidth: overrides.leftSidebarWidth ?? leftSidebarWidth,
@@ -330,6 +341,37 @@ function App() {
   const resolvedRightActivePanel = rightDockedPanelIds.includes(rightActivePanel)
     ? rightActivePanel
     : rightDockedPanelIds[0] || null
+
+  const setCanvasTransform = useCallback((nextTransformOrUpdater) => {
+    setTransform((current) => {
+      const nextTransform =
+        typeof nextTransformOrUpdater === 'function' ? nextTransformOrUpdater(current) : nextTransformOrUpdater
+      pendingUiSignatureRef.current = JSON.stringify({
+        theme,
+        showGrid,
+        canvasTransform: nextTransform,
+        leftSidebarOpen,
+        rightSidebarOpen,
+        leftSidebarWidth,
+        rightSidebarWidth,
+        leftActivePanel: resolvedLeftActivePanel,
+        rightActivePanel: resolvedRightActivePanel,
+        panelDock,
+      })
+      return nextTransform
+    })
+  }, [
+    leftSidebarOpen,
+    leftSidebarWidth,
+    panelDock,
+    resolvedLeftActivePanel,
+    resolvedRightActivePanel,
+    rightSidebarOpen,
+    rightSidebarWidth,
+    showGrid,
+    theme,
+  ])
+
   const previewVisible =
     (panelDock.preview === 'left' && leftSidebarOpen && resolvedLeftActivePanel === 'preview') ||
     (panelDock.preview === 'right' && rightSidebarOpen && resolvedRightActivePanel === 'preview')
@@ -410,6 +452,14 @@ function App() {
   )
 
   useEffect(() => {
+    setProjectUiReady(false)
+    pendingInitialCanvasFitRef.current = false
+    loadedUiSignatureRef.current = ''
+    pendingUiSignatureRef.current = null
+    sidebarUiSignatureRef.current = ''
+  }, [selectedProjectId])
+
+  useEffect(() => {
     if (!selectedProjectId || !tree?.project) {
       return
     }
@@ -417,6 +467,7 @@ function App() {
     const nextUi = {
       theme: projectUi.theme,
       showGrid: projectUi.showGrid,
+      canvasTransform: projectUi.canvasTransform,
       leftSidebarOpen: projectUi.leftSidebarOpen,
       rightSidebarOpen: projectUi.rightSidebarOpen,
       leftSidebarWidth: projectUi.leftSidebarWidth,
@@ -433,6 +484,8 @@ function App() {
     loadedUiSignatureRef.current = incomingSignature
     setTheme(nextUi.theme)
     setShowGrid(nextUi.showGrid)
+    setTransform(nextUi.canvasTransform || { x: 80, y: 80, scale: 1 })
+    pendingInitialCanvasFitRef.current = !nextUi.canvasTransform
     setLeftSidebarOpen(nextUi.leftSidebarOpen)
     setRightSidebarOpen(nextUi.rightSidebarOpen)
     setLeftSidebarWidth(nextUi.leftSidebarWidth)
@@ -440,7 +493,8 @@ function App() {
     setLeftActivePanel(nextUi.leftActivePanel)
     setRightActivePanel(nextUi.rightActivePanel)
     setPanelDock(nextUi.panelDock)
-  }, [projectUi.leftActivePanel, projectUi.leftSidebarOpen, projectUi.leftSidebarWidth, projectUi.panelDock, projectUi.rightActivePanel, projectUi.rightSidebarOpen, projectUi.rightSidebarWidth, projectUi.showGrid, projectUi.theme, selectedProjectId, tree?.project])
+    setProjectUiReady(true)
+  }, [projectUi.canvasTransform, projectUi.leftActivePanel, projectUi.leftSidebarOpen, projectUi.leftSidebarWidth, projectUi.panelDock, projectUi.rightActivePanel, projectUi.rightSidebarOpen, projectUi.rightSidebarWidth, projectUi.showGrid, projectUi.theme, selectedProjectId, tree?.project])
 
   const handleAuthLost = useCallback(() => {
     setCurrentUser(null)
@@ -452,6 +506,7 @@ function App() {
     setMobileConnectionCount(0)
     setAccountStatus('')
     setAccountDialog(null)
+    setProjectUiReady(false)
     setAccountForm({
       username: '',
       currentPassword: '',
@@ -517,8 +572,8 @@ function App() {
     if (currentUser && selectedProjectId && !tree) {
       return
     }
-    updateUrlState(selectedProjectId, selectedNodeId || getUrlState().nodeId, transform)
-  }, [authReady, currentUser, selectedNodeId, selectedProjectId, transform, tree])
+    updateUrlState(selectedProjectId, selectedNodeId || getUrlState().nodeId)
+  }, [authReady, currentUser, selectedNodeId, selectedProjectId, tree])
 
   useEffect(() => {
     setMultiSelectedNodeIds([])
@@ -756,13 +811,14 @@ function App() {
   }, [applyNodeUpdate, patchNodeRequest])
 
   useEffect(() => {
-    if (!currentUser || !selectedProjectId || !tree?.project) {
+    if (!currentUser || !selectedProjectId || !tree?.project || !projectUiReady) {
       return undefined
     }
 
     const nextUi = {
       theme,
       showGrid,
+      canvasTransform: transform,
       leftSidebarOpen,
       rightSidebarOpen,
       leftSidebarWidth,
@@ -802,17 +858,20 @@ function App() {
     selectedProjectId,
     showGrid,
     theme,
+    transform,
     tree?.project,
+    projectUiReady,
   ])
 
   useEffect(() => {
-    if (!currentUser || !selectedProjectId || !tree?.project || !loadedUiSignatureRef.current) {
+    if (!currentUser || !selectedProjectId || !tree?.project || !loadedUiSignatureRef.current || !projectUiReady) {
       return undefined
     }
 
     const nextUi = {
       theme,
       showGrid,
+      canvasTransform: transform,
       leftSidebarOpen,
       rightSidebarOpen,
       leftSidebarWidth,
@@ -855,7 +914,9 @@ function App() {
     selectedProjectId,
     showGrid,
     theme,
+    transform,
     tree?.project,
+    projectUiReady,
   ])
 
   async function setProjectCollapsedStateRequest(projectId, collapsed) {
@@ -987,6 +1048,7 @@ function App() {
 
       nodes.push({
         id: current.id,
+        owner_user_id: current.ownerUserId || null,
         parent_id: current.childrenParentOverride ?? current.parent_id,
         variant_of_id: current.variant_of_id,
         type: current.type,
@@ -2661,6 +2723,7 @@ function App() {
     cameraVideoRef,
     cameraViewportRef,
     captureFullCameraFrame,
+    focusSelectedNode,
     fitCanvasToView,
     handleCanvasPointerMove,
     previewViewportRef,
@@ -2686,10 +2749,21 @@ function App() {
     setPreviewTransform,
     setRightSidebarWidth,
     setSelectedCameraId,
-    setTransform,
+    setTransform: setCanvasTransform,
     transform,
     uploadFiles,
   })
+
+  useEffect(() => {
+    if (!projectUiReady || !pendingInitialCanvasFitRef.current) {
+      return
+    }
+    if (!tree?.project || !layout.width || !layout.height) {
+      return
+    }
+    pendingInitialCanvasFitRef.current = false
+    fitCanvasToView()
+  }, [fitCanvasToView, layout.height, layout.width, projectUiReady, tree?.project])
 
   const panelDefinitions = {
       preview: {
@@ -2857,6 +2931,8 @@ function App() {
   const rightRailPanels = rightDockedPanelIds.map((panelId) => panelDefinitions[panelId]).filter(Boolean)
   const activeLeftPanel = resolvedLeftActivePanel ? panelDefinitions[resolvedLeftActivePanel] : null
   const activeRightPanel = resolvedRightActivePanel ? panelDefinitions[resolvedRightActivePanel] : null
+  const effectiveLeftSidebarOpen = projectUiReady ? leftSidebarOpen : false
+  const effectiveRightSidebarOpen = projectUiReady ? rightSidebarOpen : false
 
   if (!authReady) {
     return <div className="app-shell app-shell--loading" data-theme={theme}>Loading...</div>
@@ -2883,13 +2959,14 @@ function App() {
         <TopBar
           busy={busy}
         fileInputRef={fileInputRef}
+        focusSelectedNode={focusSelectedNode}
         fitCanvasToView={fitCanvasToView}
         focusPathMode={focusPathMode}
         historyState={historyState}
         importInputRef={importInputRef}
         importProjectName={importProjectName}
         leftActivePanel={resolvedLeftActivePanel}
-        leftSidebarOpen={leftSidebarOpen}
+        leftSidebarOpen={effectiveLeftSidebarOpen}
         mobileConnectionCount={mobileConnectionCount}
         openMenu={openMenu}
         panelDock={panelDock}
@@ -2900,7 +2977,7 @@ function App() {
         projects={projects}
         redo={redo}
         rightActivePanel={resolvedRightActivePanel}
-        rightSidebarOpen={rightSidebarOpen}
+        rightSidebarOpen={effectiveRightSidebarOpen}
         selectedNode={selectedNode}
         selectedProjectId={selectedProjectId}
         openNewFolderDialog={openNewFolderDialog}
@@ -2933,7 +3010,7 @@ function App() {
         style={{
           gridColumn: '1 / -1',
           gridRow: '2 / 3',
-          gridTemplateColumns: `${SIDEBAR_RAIL_WIDTH}px ${leftSidebarOpen ? `${leftSidebarWidth}px` : '0px'} minmax(0, 1fr) ${rightSidebarOpen ? `${rightSidebarWidth}px` : '0px'} ${SIDEBAR_RAIL_WIDTH}px`,
+          gridTemplateColumns: `${SIDEBAR_RAIL_WIDTH}px ${effectiveLeftSidebarOpen ? `${leftSidebarWidth}px` : '0px'} minmax(0, 1fr) ${effectiveRightSidebarOpen ? `${rightSidebarWidth}px` : '0px'} ${SIDEBAR_RAIL_WIDTH}px`,
         }}
       >
         <SidebarRail
@@ -2943,7 +3020,7 @@ function App() {
           onEndDrag={() => setDraggingPanelId(null)}
           onOpenContextMenu={openSidebarContextMenu}
           onStartDrag={setDraggingPanelId}
-          open={leftSidebarOpen}
+          open={effectiveLeftSidebarOpen}
           panels={leftRailPanels}
           side="left"
           togglePanel={toggleSidebarPanel}
@@ -2957,7 +3034,7 @@ function App() {
             event.preventDefault()
           }}
           side="left"
-          visible={leftSidebarOpen && Boolean(activeLeftPanel)}
+          visible={effectiveLeftSidebarOpen && Boolean(activeLeftPanel)}
         />
         <CanvasWorkspace
           beginNodeDrag={beginNodeDrag}
@@ -2973,6 +3050,7 @@ function App() {
           editForm={editForm}
           editTargetNode={editTargetNode}
           fileInputRef={fileInputRef}
+          focusSelectedNode={focusSelectedNode}
           fitCanvasToView={fitCanvasToView}
           focusPathMode={focusPathMode}
           handleCanvasPointerMove={handleCanvasPointerMove}
@@ -3012,7 +3090,7 @@ function App() {
             event.preventDefault()
           }}
           side="right"
-          visible={rightSidebarOpen && Boolean(activeRightPanel)}
+          visible={effectiveRightSidebarOpen && Boolean(activeRightPanel)}
         />
         <SidebarRail
           activePanelId={resolvedRightActivePanel}
@@ -3021,7 +3099,7 @@ function App() {
           onEndDrag={() => setDraggingPanelId(null)}
           onOpenContextMenu={openSidebarContextMenu}
           onStartDrag={setDraggingPanelId}
-          open={rightSidebarOpen}
+          open={effectiveRightSidebarOpen}
           panels={rightRailPanels}
           side="right"
           togglePanel={toggleSidebarPanel}

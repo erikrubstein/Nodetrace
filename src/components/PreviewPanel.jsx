@@ -45,6 +45,8 @@ export default function PreviewPanel({
   const pendingFitAfterCropRef = useRef(false)
   const saveTimerRef = useRef(null)
   const saveSequenceRef = useRef(0)
+  const syncedNodeIdRef = useRef(null)
+  const syncedEditSignatureRef = useRef(JSON.stringify(defaultImageEdits))
   const [sourceMimeType, setSourceMimeType] = useState('image/jpeg')
   const [localEdits, setLocalEdits] = useState(defaultImageEdits)
   const [cropMode, setCropMode] = useState(false)
@@ -133,11 +135,38 @@ export default function PreviewPanel({
   }, [selectedNode?.id, selectedNode?.imageUrl, setError])
 
   useEffect(() => {
-    setLocalEdits(normalizedSelectedEdits)
-    setCropMode(false)
-    setCropSelection(null)
-    pendingInitialFitRef.current = true
-  }, [normalizedSelectedEdits, selectedNode?.id])
+    const nextNodeId = selectedNode?.id ?? null
+    const nodeChanged = syncedNodeIdRef.current !== nextNodeId
+    const serverChanged = syncedEditSignatureRef.current !== selectedEditSignature
+    const localMatchesPreviousServer = localEditSignature === syncedEditSignatureRef.current
+    const localMatchesCurrentServer = localEditSignature === selectedEditSignature
+
+    if (nodeChanged) {
+      syncedNodeIdRef.current = nextNodeId
+      syncedEditSignatureRef.current = selectedEditSignature
+      setLocalEdits(normalizedSelectedEdits)
+      setCropMode(false)
+      setCropSelection(null)
+      pendingInitialFitRef.current = true
+      return
+    }
+
+    if (!serverChanged) {
+      return
+    }
+
+    if (localMatchesCurrentServer) {
+      syncedEditSignatureRef.current = selectedEditSignature
+      return
+    }
+
+    if (localMatchesPreviousServer) {
+      syncedEditSignatureRef.current = selectedEditSignature
+      setLocalEdits(normalizedSelectedEdits)
+      setCropMode(false)
+      setCropSelection(null)
+    }
+  }, [localEditSignature, normalizedSelectedEdits, selectedEditSignature, selectedNode?.id])
 
   useEffect(() => {
     if (!selectedNode?.id || localEditSignature === selectedEditSignature) {

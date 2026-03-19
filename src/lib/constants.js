@@ -27,6 +27,7 @@ export const defaultProjectSettings = {
 export const defaultUserProjectUi = {
   theme: 'dark',
   showGrid: true,
+  canvasTransform: null,
   leftSidebarOpen: false,
   rightSidebarOpen: true,
   leftSidebarWidth: 340,

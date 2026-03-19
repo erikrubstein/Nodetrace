@@ -34,6 +34,10 @@ export function FitViewIcon() {
   return <i aria-hidden="true" className="fa-solid fa-expand" />
 }
 
+export function FocusNodeIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-crosshairs" />
+}
+
 export function CameraIcon() {
   return <i aria-hidden="true" className="fa-solid fa-camera" />
 }

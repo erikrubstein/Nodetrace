@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { ApiError, api } from '../lib/api'
 import { getUrlState, updateUrlState } from '../lib/urlState'
+import { debugLog } from '../lib/debug'
 
 export default function useProjectSync({
   captureSessionId,
@@ -27,6 +28,7 @@ export default function useProjectSync({
       const requestSequence = ++projectsRequestSequenceRef.current
       const projectList = await api('/api/projects')
       if (requestSequence !== projectsRequestSequenceRef.current) {
+        debugLog('loadProjects ignored stale response', { preferredProjectId, requestSequence })
         return projectList
       }
       setProjects(projectList)
@@ -45,6 +47,11 @@ export default function useProjectSync({
           ? preferredProjectId
           : projectList[0].id
 
+      debugLog('loadProjects selected project', {
+        preferredProjectId,
+        nextId,
+        projectIds: projectList.map((project) => project.id),
+      })
       setSelectedProjectId(nextId)
       setStatus('')
     },
@@ -60,14 +67,21 @@ export default function useProjectSync({
       const requestSequence = ++treeRequestSequenceRef.current
       const payload = await api(`/api/projects/${projectId}/tree`)
       if (requestSequence !== treeRequestSequenceRef.current) {
+        debugLog('loadTree ignored stale response', { projectId, preferredNodeId, requestSequence })
         return payload
       }
-      setTree(payload)
-      setSelectedNodeId(
+      const resolvedNodeId =
         preferredNodeId && payload.nodes.some((node) => node.id === preferredNodeId)
           ? preferredNodeId
-          : payload.root?.id ?? null,
-      )
+          : payload.root?.id ?? null
+      debugLog('loadTree resolved selection', {
+        projectId,
+        preferredNodeId,
+        resolvedNodeId,
+        rootNodeId: payload.root?.id ?? null,
+      })
+      setTree(payload)
+      setSelectedNodeId(resolvedNodeId)
     },
     [setSelectedNodeId, setTree],
   )
@@ -250,6 +264,7 @@ export default function useProjectSync({
       const payload = JSON.parse(event.data || '{}')
 
       if (payload.type === 'connected') {
+        debugLog('project event connected', { selectedProjectId })
         return
       }
 
@@ -265,10 +280,20 @@ export default function useProjectSync({
       }
 
       if (pendingLocalEventsRef.current > 0) {
+        debugLog('project event consumed as local echo', {
+          selectedProjectId,
+          type: payload.type,
+          pendingLocalEvents: pendingLocalEventsRef.current,
+        })
         pendingLocalEventsRef.current -= 1
         return
       }
 
+      debugLog('project event triggering tree reload', {
+        selectedProjectId,
+        type: payload.type,
+        preferredNodeId: selectedNodeIdRef.current,
+      })
       loadTree(selectedProjectId, selectedNodeIdRef.current).catch((loadError) => {
         if (loadError instanceof ApiError && loadError.status === 401) {
           onAuthLost?.()
