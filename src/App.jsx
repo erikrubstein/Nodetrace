@@ -1191,7 +1191,6 @@ function App() {
     if (!selectedNode) {
       setEditTargetId(null)
       setEditForm({ name: '', notes: '', tags: '' })
-      setPreviewTransform({ x: 0, y: 0, scale: 1 })
       return
     }
 
@@ -1205,7 +1204,6 @@ function App() {
       notes: selectedNode.notes || '',
       tags: (selectedNode.tags || []).join(', '),
     })
-    setPreviewTransform({ x: 0, y: 0, scale: 1 })
   }, [editTargetId, selectedNode, setEditForm, setEditTargetId])
 
   useEffect(() => {
@@ -2699,17 +2697,17 @@ function App() {
         title: 'Preview',
         icon: <PreviewIcon />,
         content: (
-          <PreviewPanel
-            beginPreviewPan={beginPreviewPan}
-            busy={busy}
-            patchNodeImageEdits={saveNodeImageEdits}
-            previewTransform={previewTransform}
-            previewViewportRef={previewViewportRef}
-            resetPreviewTransform={() => setPreviewTransform({ x: 0, y: 0, scale: 1 })}
-            selectedNode={selectedNode}
-            setError={setError}
-            stopPreviewPan={stopPreviewPan}
-          />
+            <PreviewPanel
+              beginPreviewPan={beginPreviewPan}
+              busy={busy}
+              patchNodeImageEdits={saveNodeImageEdits}
+              previewTransform={previewTransform}
+              previewViewportRef={previewViewportRef}
+              setPreviewTransform={setPreviewTransform}
+              selectedNode={selectedNode}
+              setError={setError}
+              stopPreviewPan={stopPreviewPan}
+            />
         ),
       },
       camera: {

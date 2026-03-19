@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   defaultImageEdits,
   mapDisplayedCropToSourceCrop,
@@ -32,14 +32,17 @@ export default function PreviewPanel({
   patchNodeImageEdits,
   previewTransform,
   previewViewportRef,
-  resetPreviewTransform,
+  setPreviewTransform,
   selectedNode,
   setError,
   stopPreviewPan,
 }) {
   const renderCanvasRef = useRef(null)
   const sourceImageRef = useRef(null)
+  const sourceImageNodeIdRef = useRef(null)
   const cropGestureRef = useRef(null)
+  const pendingInitialFitRef = useRef(false)
+  const pendingFitAfterCropRef = useRef(false)
   const saveTimerRef = useRef(null)
   const saveSequenceRef = useRef(0)
   const [sourceMimeType, setSourceMimeType] = useState('image/jpeg')
@@ -59,9 +62,16 @@ export default function PreviewPanel({
   const localEditSignature = useMemo(() => JSON.stringify(normalizeImageEdits(localEdits)), [localEdits])
   const hasImage = Boolean(selectedNode?.imageUrl)
   const hasCrop = Boolean(localEdits.crop)
-  const hasNonDefaultEdits = useMemo(
-    () => localEditSignature !== JSON.stringify(defaultImageEdits),
-    [localEditSignature],
+  const hasAdjustmentChanges = useMemo(
+    () =>
+      localEdits.brightness !== defaultImageEdits.brightness ||
+      localEdits.contrast !== defaultImageEdits.contrast ||
+      localEdits.exposure !== defaultImageEdits.exposure ||
+      localEdits.sharpness !== defaultImageEdits.sharpness ||
+      localEdits.denoise !== defaultImageEdits.denoise ||
+      localEdits.invert !== defaultImageEdits.invert ||
+      localEdits.rotationTurns !== defaultImageEdits.rotationTurns,
+    [localEdits],
   )
 
   useEffect(() => {
@@ -71,6 +81,11 @@ export default function PreviewPanel({
     async function loadSourceImage() {
       if (!selectedNode?.imageUrl) {
         sourceImageRef.current = null
+        sourceImageNodeIdRef.current = null
+        if (renderCanvasRef.current) {
+          renderCanvasRef.current.width = 0
+          renderCanvasRef.current.height = 0
+        }
         setImageReady(false)
         setSourceMimeType('image/jpeg')
         return
@@ -94,11 +109,13 @@ export default function PreviewPanel({
           return
         }
         sourceImageRef.current = image
+        sourceImageNodeIdRef.current = selectedNode.id
         setSourceMimeType(blob.type || 'image/jpeg')
         setImageReady(true)
       } catch (error) {
         if (!cancelled) {
           sourceImageRef.current = null
+          sourceImageNodeIdRef.current = null
           setImageReady(false)
           setError(error.message || 'Unable to load the selected image.')
         }
@@ -113,22 +130,14 @@ export default function PreviewPanel({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [selectedNode?.imageUrl, setError])
+  }, [selectedNode?.id, selectedNode?.imageUrl, setError])
 
   useEffect(() => {
     setLocalEdits(normalizedSelectedEdits)
     setCropMode(false)
     setCropSelection(null)
+    pendingInitialFitRef.current = true
   }, [normalizedSelectedEdits, selectedNode?.id])
-
-  useEffect(() => {
-    const canvas = renderCanvasRef.current
-    const image = sourceImageRef.current
-    if (!canvas || !imageReady || !image) {
-      return
-    }
-    renderImageEditsToCanvas(canvas, image, localEdits, { maxDimension: 1800 })
-  }, [imageReady, localEdits])
 
   useEffect(() => {
     if (!selectedNode?.id || localEditSignature === selectedEditSignature) {
@@ -160,8 +169,62 @@ export default function PreviewPanel({
     }))
   }
 
-  function resetEdits() {
-    setLocalEdits(defaultImageEdits)
+  const fitPreviewView = useCallback(() => {
+    const viewport = previewViewportRef.current
+    const canvas = renderCanvasRef.current
+    if (!viewport || !canvas || !canvas.width || !canvas.height) {
+      setPreviewTransform({ x: 0, y: 0, scale: 1 })
+      return
+    }
+
+    const padding = 12
+    const availableWidth = Math.max(40, viewport.clientWidth - padding * 2)
+    const availableHeight = Math.max(40, viewport.clientHeight - padding * 2)
+    const scale = Math.max(0.1, Math.min(10, Math.min(availableWidth / canvas.width, availableHeight / canvas.height)))
+    setPreviewTransform({
+      scale,
+      x: (viewport.clientWidth - canvas.width * scale) / 2,
+      y: (viewport.clientHeight - canvas.height * scale) / 2,
+    })
+  }, [previewViewportRef, setPreviewTransform])
+
+  function resetAdjustments() {
+    setLocalEdits((current) => ({
+      ...current,
+      brightness: defaultImageEdits.brightness,
+      contrast: defaultImageEdits.contrast,
+      exposure: defaultImageEdits.exposure,
+      sharpness: defaultImageEdits.sharpness,
+      denoise: defaultImageEdits.denoise,
+      invert: defaultImageEdits.invert,
+      rotationTurns: defaultImageEdits.rotationTurns,
+    }))
+    setCropMode(false)
+    setCropSelection(null)
+  }
+
+  useLayoutEffect(() => {
+    const canvas = renderCanvasRef.current
+    const image = sourceImageRef.current
+    if (!canvas || !imageReady || !image || sourceImageNodeIdRef.current !== selectedNode?.id) {
+      return
+    }
+    renderImageEditsToCanvas(canvas, image, localEdits, { maxDimension: 1800 })
+    if (pendingFitAfterCropRef.current) {
+      pendingFitAfterCropRef.current = false
+      fitPreviewView()
+    } else if (pendingInitialFitRef.current) {
+      pendingInitialFitRef.current = false
+      fitPreviewView()
+    }
+  }, [fitPreviewView, imageReady, localEdits, selectedNode?.id])
+
+  function resetCrop() {
+    setLocalEdits((current) => ({
+      ...current,
+      crop: null,
+    }))
+    pendingFitAfterCropRef.current = true
     setCropMode(false)
     setCropSelection(null)
   }
@@ -267,6 +330,7 @@ export default function PreviewPanel({
         current.rotationTurns,
       ),
     }))
+    pendingFitAfterCropRef.current = true
     setCropMode(false)
     return true
   }
@@ -361,13 +425,19 @@ export default function PreviewPanel({
       disabled: !hasImage,
       iconClassName: 'fa-solid fa-expand',
       label: 'Fit View',
-      onClick: resetPreviewTransform,
+      onClick: fitPreviewView,
     }),
     tooltipButton({
       disabled: !hasImage || busy,
       iconClassName: 'fa-solid fa-rotate-right',
       label: 'Rotate 90 Degrees',
       onClick: () => updateEdit('rotationTurns', (localEdits.rotationTurns + 1) % 4),
+    }),
+    tooltipButton({
+      disabled: !hasImage || busy || !hasCrop,
+      iconClassName: 'fa-solid fa-eraser',
+      label: 'Reset Crop',
+      onClick: resetCrop,
     }),
     tooltipButton({
       active: cropMode,
@@ -380,10 +450,10 @@ export default function PreviewPanel({
       },
     }),
     tooltipButton({
-      disabled: !hasImage || busy || !hasNonDefaultEdits,
-      iconClassName: 'fa-solid fa-rotate-left',
+      disabled: !hasImage || busy || !hasAdjustmentChanges,
+      iconClassName: 'fa-solid fa-sliders',
       label: 'Reset Adjustments',
-      onClick: resetEdits,
+      onClick: resetAdjustments,
     }),
     tooltipButton({
       active: localEdits.invert,
@@ -428,10 +498,8 @@ export default function PreviewPanel({
             ) : null}
           </div>
 
-          <div className="inspector__section field-stack">
+          <div className="inspector__section field-stack preview-panel__controls">
             <div className="inspector__title">Adjustments</div>
-            {cropMode ? <div className="preview-panel__hint">Drag over the preview to define a crop.</div> : null}
-            {hasCrop && !cropMode ? <div className="preview-panel__hint">Crop applied. Use reset to revert.</div> : null}
             <label>
               <span className="preview-panel__control-header"><span>Brightness</span><strong>{localEdits.brightness}</strong></span>
               <input max="100" min="-100" type="range" value={localEdits.brightness} onChange={(event) => updateEdit('brightness', Number(event.target.value))} />

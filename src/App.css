@@ -1198,11 +1198,7 @@ select {
 .preview-stage {
   position: absolute;
   left: 0;
-  right: 0;
   top: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
   transform-origin: 0 0;
   user-select: none;
 }
@@ -1243,6 +1239,14 @@ select {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.preview-panel__controls {
+  gap: 6px;
+}
+
+.preview-panel__controls label {
+  gap: 2px;
 }
 
 label {
