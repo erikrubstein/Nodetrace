@@ -16,12 +16,50 @@ const uploadsDir = path.join(dataDir, 'uploads')
 const tempDir = path.join(dataDir, 'tmp')
 const dbPath = path.join(dataDir, 'database.db')
 const distDir = path.join(baseDir, 'dist')
+loadEnvFile(path.join(baseDir, '.env'))
 const projectEventClients = new Map()
 const activeDesktopSessions = new Map()
 const activeMobileConnections = new Map()
 const CLIENT_TTL_MS = 45000
 const MOBILE_CONNECTION_TTL_MS = 30000
 const AUTH_COOKIE = 'session'
+const OPENAI_IDENTIFICATION_MODEL = process.env.OPENAI_IDENTIFICATION_MODEL || 'gpt-4.1'
+const PROJECT_SECRET_RAW = process.env.NODETRACE_SECRET_KEY || ''
+const PROJECT_SECRET_KEY = PROJECT_SECRET_RAW ? crypto.createHash('sha256').update(PROJECT_SECRET_RAW).digest() : null
+
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return
+  }
+
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue
+    }
+
+    const separatorIndex = trimmed.indexOf('=')
+    if (separatorIndex <= 0) {
+      continue
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim()
+    if (!key || process.env[key] != null) {
+      continue
+    }
+
+    let value = trimmed.slice(separatorIndex + 1).trim()
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1)
+    }
+
+    process.env[key] = value
+  }
+}
 
 fs.mkdirSync(uploadsDir, { recursive: true })
 fs.mkdirSync(tempDir, { recursive: true })
@@ -54,6 +92,7 @@ const defaultUserProjectUi = {
     preview: 'left',
     camera: 'left',
     inspector: 'right',
+    fields: 'right',
     templates: 'right',
     settings: 'right',
     account: 'right',
@@ -120,6 +159,64 @@ function generateUniqueId(lookup) {
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex')
+}
+
+function _maskApiKey(apiKey) {
+  const value = String(apiKey || '').trim()
+  if (!value) {
+    return ''
+  }
+  const suffix = value.slice(-4)
+  return `••••••••${suffix}`
+}
+
+function encryptProjectSecret(value) {
+  if (!PROJECT_SECRET_KEY) {
+    const error = new Error('NODETRACE_SECRET_KEY is not configured on the server')
+    error.status = 500
+    throw error
+  }
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', PROJECT_SECRET_KEY, iv)
+  const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`
+}
+
+function decryptProjectSecret(payload) {
+  if (!payload) {
+    return ''
+  }
+  if (!PROJECT_SECRET_KEY) {
+    const error = new Error('NODETRACE_SECRET_KEY is not configured on the server')
+    error.status = 500
+    throw error
+  }
+  const [ivPart, tagPart, encryptedPart] = String(payload).split('.')
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    PROJECT_SECRET_KEY,
+    Buffer.from(ivPart, 'base64url'),
+  )
+  decipher.setAuthTag(Buffer.from(tagPart, 'base64url'))
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(encryptedPart, 'base64url')),
+    decipher.final(),
+  ])
+  return decrypted.toString('utf8')
+}
+
+function getProjectSecretConfigurationError() {
+  return 'Project API key storage is not configured on the server'
+}
+
+function maskProjectApiKey(apiKey) {
+  const value = String(apiKey || '').trim()
+  if (!value) {
+    return ''
+  }
+  const suffix = value.slice(-4)
+  return `********${suffix}`
 }
 
 function hashPassword(password) {
@@ -212,6 +309,8 @@ function createTextSchema() {
       name TEXT NOT NULL,
       description TEXT DEFAULT '',
       settings_json TEXT DEFAULT '{}',
+      openai_api_key_encrypted TEXT,
+      openai_api_key_mask TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -266,6 +365,12 @@ function ensureTextIdSchema() {
   if (!projectColumns.some((column) => column.name === 'settings_json')) {
     db.exec(`ALTER TABLE projects ADD COLUMN settings_json TEXT DEFAULT '{}'`)
   }
+  if (!projectColumns.some((column) => column.name === 'openai_api_key_encrypted')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN openai_api_key_encrypted TEXT`)
+  }
+  if (!projectColumns.some((column) => column.name === 'openai_api_key_mask')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN openai_api_key_mask TEXT`)
+  }
   if (!nodeColumns.some((column) => column.name === 'public_id')) {
     db.exec(`ALTER TABLE nodes ADD COLUMN public_id TEXT`)
   }
@@ -307,6 +412,8 @@ function ensureTextIdSchema() {
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         settings_json TEXT DEFAULT '{}',
+        openai_api_key_encrypted TEXT,
+        openai_api_key_mask TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -332,8 +439,8 @@ function ensureTextIdSchema() {
     `)
 
     const insertProjectRow = db.prepare(`
-      INSERT INTO projects_new (id, name, description, settings_json, created_at, updated_at)
-      VALUES (@id, @name, @description, @settings_json, @created_at, @updated_at)
+      INSERT INTO projects_new (id, name, description, settings_json, openai_api_key_encrypted, openai_api_key_mask, created_at, updated_at)
+      VALUES (@id, @name, @description, @settings_json, @openai_api_key_encrypted, @openai_api_key_mask, @created_at, @updated_at)
     `)
     const insertNodeRow = db.prepare(`
       INSERT INTO nodes_new (
@@ -351,6 +458,8 @@ function ensureTextIdSchema() {
         name: row.name,
         description: row.description || '',
         settings_json: row.settings_json || '{}',
+        openai_api_key_encrypted: row.openai_api_key_encrypted || null,
+        openai_api_key_mask: row.openai_api_key_mask || null,
         created_at: row.created_at,
         updated_at: row.updated_at,
       })
@@ -448,6 +557,12 @@ function ensureAuthSchema() {
   if (!projectColumns.some((column) => column.name === 'owner_user_id')) {
     db.exec(`ALTER TABLE projects ADD COLUMN owner_user_id TEXT`)
   }
+  if (!projectColumns.some((column) => column.name === 'openai_api_key_encrypted')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN openai_api_key_encrypted TEXT`)
+  }
+  if (!projectColumns.some((column) => column.name === 'openai_api_key_mask')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN openai_api_key_mask TEXT`)
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -514,6 +629,9 @@ function ensureIdentificationSchema() {
       project_id TEXT NOT NULL,
       system_key TEXT,
       name TEXT NOT NULL,
+      ai_instructions TEXT NOT NULL DEFAULT '',
+      parent_depth INTEGER NOT NULL DEFAULT 0,
+      child_depth INTEGER NOT NULL DEFAULT 0,
       fields_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -550,13 +668,28 @@ function ensureIdentificationSchema() {
       FOREIGN KEY(reviewed_by_user_id) REFERENCES users(id)
     );
   `)
+
+  const templateColumns = db.prepare(`PRAGMA table_info(identification_templates)`).all()
+  if (!templateColumns.some((column) => column.name === 'ai_instructions')) {
+    db.exec(`ALTER TABLE identification_templates ADD COLUMN ai_instructions TEXT NOT NULL DEFAULT ''`)
+  }
+  if (!templateColumns.some((column) => column.name === 'parent_depth')) {
+    db.exec(`ALTER TABLE identification_templates ADD COLUMN parent_depth INTEGER NOT NULL DEFAULT 0`)
+  }
+  if (!templateColumns.some((column) => column.name === 'child_depth')) {
+    db.exec(`ALTER TABLE identification_templates ADD COLUMN child_depth INTEGER NOT NULL DEFAULT 0`)
+  }
 }
 
 ensureIdentificationSchema()
 
 const insertProject = db.prepare(`
-  INSERT INTO projects (id, name, description, settings_json, owner_user_id, created_at, updated_at)
-  VALUES (@id, @name, @description, @settings_json, @owner_user_id, @created_at, @updated_at)
+  INSERT INTO projects (
+    id, name, description, settings_json, openai_api_key_encrypted, openai_api_key_mask, owner_user_id, created_at, updated_at
+  )
+  VALUES (
+    @id, @name, @description, @settings_json, @openai_api_key_encrypted, @openai_api_key_mask, @owner_user_id, @created_at, @updated_at
+  )
 `)
 
 const insertNode = db.prepare(`
@@ -745,12 +878,15 @@ const getIdentificationTemplateByProjectAndSystemKey = db.prepare(`
     AND system_key = ?
 `)
 const insertIdentificationTemplate = db.prepare(`
-  INSERT INTO identification_templates (id, project_id, system_key, name, fields_json, created_at, updated_at)
-  VALUES (@id, @project_id, @system_key, @name, @fields_json, @created_at, @updated_at)
+  INSERT INTO identification_templates (id, project_id, system_key, name, ai_instructions, parent_depth, child_depth, fields_json, created_at, updated_at)
+  VALUES (@id, @project_id, @system_key, @name, @ai_instructions, @parent_depth, @child_depth, @fields_json, @created_at, @updated_at)
 `)
 const updateIdentificationTemplateStmt = db.prepare(`
   UPDATE identification_templates
   SET name = @name,
+      ai_instructions = @ai_instructions,
+      parent_depth = @parent_depth,
+      child_depth = @child_depth,
       fields_json = @fields_json,
       updated_at = @updated_at
   WHERE id = @id
@@ -897,6 +1033,15 @@ const updateProjectMetaStmt = db.prepare(`
   SET name = @name,
       description = @description,
       settings_json = @settings_json,
+      openai_api_key_encrypted = @openai_api_key_encrypted,
+      openai_api_key_mask = @openai_api_key_mask,
+      updated_at = @updated_at
+  WHERE id = @id
+`)
+const updateProjectOpenAiKeyStmt = db.prepare(`
+  UPDATE projects
+  SET openai_api_key_encrypted = @openai_api_key_encrypted,
+      openai_api_key_mask = @openai_api_key_mask,
       updated_at = @updated_at
   WHERE id = @id
 `)
@@ -933,6 +1078,8 @@ const createProjectWithRoot = db.transaction(({ name, description, owner_user_id
     name,
     description,
     settings_json: JSON.stringify(defaultProjectSettings),
+    openai_api_key_encrypted: null,
+    openai_api_key_mask: null,
     owner_user_id: owner_user_id || null,
     created_at: now,
     updated_at: now,
@@ -978,6 +1125,8 @@ const renameProjectAndRoot = db.transaction(({ id, name }) => {
     name,
     description: project.description || '',
     settings_json: project.settings_json || JSON.stringify(defaultProjectSettings),
+    openai_api_key_encrypted: project.openai_api_key_encrypted || null,
+    openai_api_key_mask: project.openai_api_key_mask || null,
     updated_at: now,
   })
 
@@ -990,6 +1139,15 @@ const renameProjectAndRoot = db.transaction(({ id, name }) => {
       updated_at: now,
     })
   }
+})
+
+const updateProjectOpenAiKey = db.transaction(({ id, encryptedKey, keyMask }) => {
+  updateProjectOpenAiKeyStmt.run({
+    id,
+    openai_api_key_encrypted: encryptedKey || null,
+    openai_api_key_mask: keyMask || null,
+    updated_at: new Date().toISOString(),
+  })
 })
 
 const createNode = db.transaction((payload) => {
@@ -1045,7 +1203,7 @@ const upsertNodeIdentificationData = db.transaction(({ nodeId, templateId, creat
   }
 })
 
-const updateIdentificationTemplate = db.transaction(({ templateId, name, fields }) => {
+const updateIdentificationTemplate = db.transaction(({ templateId, name, aiInstructions, parentDepth, childDepth, fields }) => {
   const template = getIdentificationTemplate.get(templateId)
   if (!template) {
     const error = new Error('Identification template not found')
@@ -1058,6 +1216,9 @@ const updateIdentificationTemplate = db.transaction(({ templateId, name, fields 
   updateIdentificationTemplateStmt.run({
     id: templateId,
     name,
+    ai_instructions: String(aiInstructions || '').trim(),
+    parent_depth: clampAiDepth(parentDepth),
+    child_depth: clampAiDepth(childDepth),
     fields_json: JSON.stringify(normalizedFields),
     updated_at: now,
   })
@@ -1269,6 +1430,10 @@ function createUntitledName() {
   return 'Node'
 }
 
+function clampAiDepth(value) {
+  return Math.max(0, Math.min(5, Number.parseInt(value, 10) || 0))
+}
+
 function normalizeUserProjectUi(uiInput) {
   const ui = {
     ...defaultUserProjectUi,
@@ -1288,7 +1453,7 @@ function normalizeUserProjectUi(uiInput) {
 
   if ('previewOpen' in ui || 'cameraOpen' in ui || 'inspectorOpen' in ui || 'settingsOpen' in ui || 'accountOpen' in ui) {
     const oldLeftPanels = ['camera', 'preview'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
-    const oldRightPanels = ['account', 'settings', 'templates', 'inspector'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
+    const oldRightPanels = ['account', 'settings', 'templates', 'fields', 'inspector'].filter((panelId) => Boolean(ui[`${panelId}Open`]))
     ui.leftSidebarOpen = oldLeftPanels.length > 0
     ui.rightSidebarOpen = oldRightPanels.length > 0
     ui.leftActivePanel = oldLeftPanels[0] || defaultUserProjectUi.leftActivePanel
@@ -1364,12 +1529,14 @@ function normalizeIdentificationFieldDefinitions(fieldsInput) {
     seen.add(key)
 
     const type = ['text', 'multiline'].includes(field?.type) ? field.type : 'text'
+    const mode = field?.mode === 'ai' ? 'ai' : 'manual'
     normalized.push({
       key,
       label: String(field?.label || key)
         .trim()
         .replace(/\s+/g, ' ') || key,
       type,
+      mode,
       required: false,
       reviewRequired: true,
     })
@@ -1391,11 +1558,405 @@ function normalizeIdentificationFieldValue(field, valueInput) {
   return String(valueInput ?? '').trim()
 }
 
-function identificationFieldHasValue(field, value) {
-  if (field.type === 'list') {
-    return Array.isArray(value) && value.length > 0
+function normalizeUnknownString(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+}
+
+function isUnknownLikeValue(value) {
+  const normalized = normalizeUnknownString(value)
+  return !normalized || normalized === 'unknown' || normalized === 'n/a' || normalized === 'na' || normalized === 'none'
+}
+
+function parsePercentString(value) {
+  const match = String(value ?? '')
+    .trim()
+    .match(/^(\d{1,3})(?:\.\d+)?%$/)
+  if (!match) {
+    return null
   }
+  return Math.max(0, Math.min(100, Number.parseInt(match[1], 10)))
+}
+
+function applyConfidenceGuard(eligibleFields, updates) {
+  const confidenceField = eligibleFields.find(
+    (field) => field.key === 'confidence' || /confidence/i.test(field.label),
+  )
+  if (!confidenceField) {
+    return updates
+  }
+
+  const confidenceUpdate = updates.find((update) => update.key === confidenceField.key)
+  if (!confidenceUpdate) {
+    return updates
+  }
+
+  const identityUpdates = updates.filter(
+    (update) =>
+      update.key !== confidenceField.key &&
+      (/model|part[_ ]?number/i.test(update.key) ||
+        /model|part number/i.test(eligibleFields.find((field) => field.key === update.key)?.label || '') ||
+        /manufacturer/i.test(update.key) ||
+        /manufacturer/i.test(eligibleFields.find((field) => field.key === update.key)?.label || '')),
+  )
+
+  if (identityUpdates.length === 0) {
+    return updates
+  }
+
+  const unresolvedCount = identityUpdates.filter((update) => isUnknownLikeValue(update.value)).length
+  if (unresolvedCount === 0) {
+    return updates
+  }
+
+  const currentPercent = parsePercentString(confidenceUpdate.value)
+  if (currentPercent == null) {
+    confidenceUpdate.value = unresolvedCount >= 2 ? '25%' : '40%'
+    return updates
+  }
+
+  const cappedPercent = unresolvedCount >= 2 ? Math.min(currentPercent, 25) : Math.min(currentPercent, 40)
+  confidenceUpdate.value = `${cappedPercent}%`
+  return updates
+}
+
+function identificationFieldHasValue(field, value) {
   return String(value || '').trim().length > 0
+}
+
+function guessMimeType(filePath) {
+  const extension = path.extname(String(filePath || '')).toLowerCase()
+  if (extension === '.png') {
+    return 'image/png'
+  }
+  if (extension === '.webp') {
+    return 'image/webp'
+  }
+  return 'image/jpeg'
+}
+
+function toDataUrl(filePath) {
+  const buffer = fs.readFileSync(filePath)
+  return `data:${guessMimeType(filePath)};base64,${buffer.toString('base64')}`
+}
+
+function buildNodePathNames(nodesById, nodeId) {
+  const names = []
+  let currentId = nodeId
+  while (currentId) {
+    const current = nodesById.get(currentId)
+    if (!current) {
+      break
+    }
+    names.unshift(current.name)
+    currentId = current.parent_id
+  }
+  return names
+}
+
+function collectScopedNodeEntries(projectNodes, selectedNodeId, parentDepth, childDepth) {
+  const nodesById = new Map(projectNodes.map((node) => [node.id, node]))
+  const childrenByParent = new Map()
+  const variantsByAnchor = new Map()
+
+  for (const node of projectNodes) {
+    if (node.parent_id) {
+      if (!childrenByParent.has(node.parent_id)) {
+        childrenByParent.set(node.parent_id, [])
+      }
+      childrenByParent.get(node.parent_id).push(node)
+    }
+    if (node.variant_of_id) {
+      if (!variantsByAnchor.has(node.variant_of_id)) {
+        variantsByAnchor.set(node.variant_of_id, [])
+      }
+      variantsByAnchor.get(node.variant_of_id).push(node)
+    }
+  }
+
+  const baseRelations = new Map()
+  baseRelations.set(selectedNodeId, 'selected node')
+
+  let currentParentId = nodesById.get(selectedNodeId)?.parent_id || null
+  for (let depth = 1; depth <= parentDepth && currentParentId; depth += 1) {
+    baseRelations.set(currentParentId, `parent depth ${depth}`)
+    currentParentId = nodesById.get(currentParentId)?.parent_id || null
+  }
+
+  const queue = [{ id: selectedNodeId, depth: 0 }]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || current.depth >= childDepth) {
+      continue
+    }
+    for (const child of childrenByParent.get(current.id) || []) {
+      const nextDepth = current.depth + 1
+      if (!baseRelations.has(child.id)) {
+        baseRelations.set(child.id, `child depth ${nextDepth}`)
+      }
+      queue.push({ id: child.id, depth: nextDepth })
+    }
+  }
+
+  const scopedEntries = []
+  const seenNodeIds = new Set()
+
+  function pushScopedNode(node, relation) {
+    if (!node || seenNodeIds.has(node.id)) {
+      return
+    }
+    seenNodeIds.add(node.id)
+    scopedEntries.push({
+      nodeId: node.id,
+      relation,
+      path: buildNodePathNames(nodesById, node.id).join(' > '),
+    })
+  }
+
+  for (const [nodeId, relation] of baseRelations.entries()) {
+    const node = nodesById.get(nodeId)
+    pushScopedNode(node, relation)
+    for (const variant of variantsByAnchor.get(nodeId) || []) {
+      pushScopedNode(variant, `${relation} variant`)
+    }
+  }
+
+  return scopedEntries
+}
+
+function extractResponseText(payload) {
+  if (typeof payload?.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text.trim()
+  }
+  const texts = []
+  for (const outputItem of payload?.output || []) {
+    for (const content of outputItem?.content || []) {
+      if (typeof content?.text === 'string') {
+        texts.push(content.text)
+      }
+    }
+  }
+  return texts.join('\n').trim()
+}
+
+function parseJsonFromModelText(text) {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) {
+    throw new Error('AI returned an empty response')
+  }
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced ? fenced[1].trim() : trimmed
+  return JSON.parse(candidate)
+}
+
+async function runOpenAiIdentification({ node, projectNodes, identification, identificationByNodeId, apiKey }) {
+  const reviewedFields = identification.fields.filter((field) => field.reviewed)
+  const eligibleFields = identification.fields.filter((field) => field.mode === 'ai' && !field.reviewed)
+  if (eligibleFields.length === 0) {
+    return { updates: [], message: 'No unreviewed AI-assisted fields to fill.' }
+  }
+
+  const nodesById = new Map(projectNodes.map((projectNode) => [projectNode.id, projectNode]))
+  const fieldScopes = new Map()
+  const scopedNodesById = new Map()
+  const imageEntries = []
+  const imageKeyToId = new Map()
+  for (const field of eligibleFields) {
+    const scopedEntries = collectScopedNodeEntries(
+      projectNodes,
+      node.id,
+      Number(identification.templateParentDepth || 0),
+      Number(identification.templateChildDepth || 0),
+    )
+    fieldScopes.set(field.key, scopedEntries)
+    for (const entry of scopedEntries) {
+      if (!scopedNodesById.has(entry.nodeId)) {
+        scopedNodesById.set(entry.nodeId, entry)
+      }
+      const scopedNode = nodesById.get(entry.nodeId)
+      if (!scopedNode) {
+        continue
+      }
+      const imagePath = scopedNode.image_path || scopedNode.preview_path
+      if (!imagePath) {
+        continue
+      }
+      const absolutePath = path.join(uploadsDir, imagePath)
+      if (!fs.existsSync(absolutePath)) {
+        continue
+      }
+      const imageKey = `${scopedNode.id}:${absolutePath}`
+      if (imageKeyToId.has(imageKey)) {
+        continue
+      }
+      const imageId = `img_${imageEntries.length + 1}`
+      imageKeyToId.set(imageKey, imageId)
+      imageEntries.push({
+        id: imageId,
+        nodeId: scopedNode.id,
+        relation: entry.relation,
+        path: entry.path,
+        absolutePath,
+      })
+    }
+  }
+
+  const scopedNodeText = [...scopedNodesById.values()].map((entry) => {
+    const scopedNode = nodesById.get(entry.nodeId)
+    const scopedIdentification = identificationByNodeId.get(entry.nodeId) || null
+    return {
+      id: scopedNode.id,
+      relation: entry.relation,
+      path: entry.path,
+      name: scopedNode.name,
+      type: scopedNode.type,
+      notes: scopedNode.notes || '',
+      hasImage: Boolean(scopedNode.image_path || scopedNode.preview_path),
+      identification: scopedIdentification
+        ? {
+            templateName: scopedIdentification.templateName,
+            status: scopedIdentification.status,
+            fields: scopedIdentification.fields.map((field) => ({
+              key: field.key,
+              label: field.label,
+              value: field.value,
+              reviewed: field.reviewed,
+              source: field.source,
+            })),
+          }
+        : null,
+    }
+  })
+
+  const promptPayload = {
+    node: {
+      id: node.id,
+      name: node.name,
+      type: node.type,
+      path: buildNodePathNames(new Map(projectNodes.map((projectNode) => [projectNode.id, projectNode])), node.id).join(' > '),
+    },
+    reviewedFields: reviewedFields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      value: field.value,
+    })),
+    currentFields: identification.fields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      value: field.value,
+      reviewed: field.reviewed,
+      mode: field.mode,
+    })),
+    scopedNodes: scopedNodeText,
+    tasks: eligibleFields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      type: field.type,
+      scopedNodeIds: (fieldScopes.get(field.key) || []).map((entry) => entry.nodeId),
+      allowedImageIds: imageEntries
+        .filter((entry) => (fieldScopes.get(field.key) || []).some((scopeEntry) => scopeEntry.nodeId === entry.nodeId))
+        .map((entry) => entry.id),
+      parentDepth: Number(identification.templateParentDepth || 0),
+      childDepth: Number(identification.templateChildDepth || 0),
+      guidance:
+        field.key === 'manufacturer' || /manufacturer/i.test(field.label)
+          ? 'Only identify a manufacturer from explicit manufacturer text, a highly recognizable logo, or reviewed context. Do not invent a manufacturer from package style or vague board context.'
+          : field.key === 'material_description' || /material/i.test(field.label)
+            ? 'If the exact function is uncertain, prefer a conservative physical/package description over a guessed electrical function.'
+            : field.key === 'identifiers' || /identifier/i.test(field.label)
+              ? 'Only provide identifiers that are directly visible in the allowed scoped images or explicitly present in scoped text context.'
+              : field.key === 'confidence' || /confidence/i.test(field.label)
+                ? 'Return the field value as a percentage string such as "10%", "50%", or "90%". Do not return low/medium/high for the field value. If the specific model/part number or manufacturer is unknown or blank, confidence must stay low.'
+                : '',
+    })),
+    images: imageEntries.map((entry) => ({
+      id: entry.id,
+      relation: entry.relation,
+      path: entry.path,
+    })),
+  }
+
+  const content = [
+    {
+      type: 'input_text',
+      text:
+        'You are filling hardware identification fields from bounded node context. Return JSON only. ' +
+        'Every scoped node is provided as text context, including notes and any existing identification values. ' +
+        'Prefer text context first, especially reviewed field values. Only inspect images if the answer cannot be determined reasonably from text alone. ' +
+        'Only fill the requested AI-assisted fields. Never change reviewed fields; treat them as trusted facts. ' +
+        'Evaluate each field independently. Do not let a guess for one field become evidence for another field unless that information already exists in reviewed scoped text context. ' +
+        'For each task, only inspect images from allowedImageIds for that field, even if other images are present. ' +
+        `Template-level instructions: ${String(identification.templateAiInstructions || '').trim() || 'None.'} ` +
+        'Parent and child depth only define the maximum scope; the template instructions define what to use within that scope. ' +
+        'Use this evidence order: reviewed scoped text context first, then other scoped text context, then direct visible image evidence, then broader board context as a weak tie-breaker only. ' +
+        'Do not over-infer manufacturer or electrical function from package style, vague logo resemblance, or general board context. ' +
+        'If the specific model/part number or manufacturer remains unknown, blank, or only weakly inferred, keep any confidence field low rather than moderate or high. ' +
+        'If the exact function is uncertain for a material description, prefer a conservative physical description like package, pin count, or general component class instead of a specific function guess. ' +
+        'If you cannot make a reasonable guess, return an empty string. ' +
+        'Respond with {"fields":{"field_key":{"value":"...","confidenceBand":"low|medium|high","evidence":"...","rationale":"...","usedImageIds":["img_1"],"usedNodeIds":["node_1"],"sourceStrength":"direct|contextual|speculative"}}}. ' +
+        'The value is the actual field value. confidenceBand is only the model-assessed confidence metadata and is separate from any template field named Confidence. ' +
+        `Context: ${JSON.stringify(promptPayload)}`,
+    },
+  ]
+
+  for (const entry of imageEntries) {
+    content.push({
+      type: 'input_text',
+      text: `Image ${entry.id}: ${entry.relation}. Path: ${entry.path}.`,
+    })
+    content.push({
+      type: 'input_image',
+      image_url: toDataUrl(entry.absolutePath),
+      detail: 'high',
+    })
+  }
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_IDENTIFICATION_MODEL,
+      input: [
+        {
+          role: 'user',
+          content,
+        },
+      ],
+      text: {
+        format: {
+          type: 'json_object',
+        },
+      },
+    }),
+  })
+
+  const payload = await response.json()
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || 'OpenAI request failed')
+  }
+
+  const parsed = parseJsonFromModelText(extractResponseText(payload))
+  const updates = eligibleFields.map((field) => {
+    const suggestion = parsed?.fields?.[field.key] || {}
+    return {
+      key: field.key,
+      value: normalizeIdentificationFieldValue(field, suggestion.value ?? ''),
+      confidence: suggestion.confidenceBand || suggestion.confidence || null,
+      evidence: suggestion.evidence || '',
+      rationale: suggestion.rationale || '',
+      usedImageIds: Array.isArray(suggestion.usedImageIds) ? suggestion.usedImageIds.filter(Boolean) : [],
+      usedNodeIds: Array.isArray(suggestion.usedNodeIds) ? suggestion.usedNodeIds.filter(Boolean) : [],
+      sourceStrength: suggestion.sourceStrength || null,
+    }
+  })
+
+  applyConfidenceGuard(eligibleFields, updates)
+
+  return { updates, message: `AI filled ${updates.length} field${updates.length === 1 ? '' : 's'}.` }
 }
 
 function serializeIdentificationTemplate(row) {
@@ -1403,6 +1964,9 @@ function serializeIdentificationTemplate(row) {
     id: row.id,
     name: row.name,
     systemKey: row.system_key || null,
+    aiInstructions: String(row.ai_instructions || '').trim(),
+    parentDepth: clampAiDepth(row.parent_depth),
+    childDepth: clampAiDepth(row.child_depth),
     fields: normalizeIdentificationFieldDefinitions(JSON.parse(row.fields_json || '[]')),
     usageCount: Number(countNodesUsingIdentificationTemplateStmt.get(row.id)?.count || 0),
   }
@@ -1421,6 +1985,9 @@ function ensureDefaultIdentificationTemplates(projectId) {
       project_id: projectId,
       system_key: templateDefinition.system_key,
       name: templateDefinition.name,
+      ai_instructions: '',
+      parent_depth: 0,
+      child_depth: 0,
       fields_json: JSON.stringify(normalizeIdentificationFieldDefinitions(templateDefinition.fields)),
       created_at: now,
       updated_at: now,
@@ -1455,6 +2022,7 @@ function buildNodeIdentification(nodeId, templateRowsById, identificationRowsByN
       key: field.key,
       label: field.label,
       type: field.type,
+      mode: field.mode || 'manual',
       required: field.required,
       reviewRequired: field.reviewRequired,
       value: parsedValue,
@@ -1475,6 +2043,9 @@ function buildNodeIdentification(nodeId, templateRowsById, identificationRowsByN
   return {
     templateId: template.id,
     templateName: template.name,
+    templateAiInstructions: template.aiInstructions || '',
+    templateParentDepth: Number(template.parentDepth || 0),
+    templateChildDepth: Number(template.childDepth || 0),
     status,
     requiredFieldCount: totalReviewFieldCount,
     missingRequiredCount,
@@ -1528,6 +2099,8 @@ function serializeProject(row, userId) {
     ownerUserId: row.owner_user_id || null,
     ownerUsername: row.owner_username || null,
     canManageUsers: Boolean(userId && row.owner_user_id === userId),
+    openAiApiKeyConfigured: Boolean(row.openai_api_key_encrypted),
+    openAiApiKeyMask: row.openai_api_key_mask || '',
     collaborators,
     identificationTemplates: templates,
     settings: preferences.settings,
@@ -2100,6 +2673,9 @@ function restoreProjectFromArchive(projectId, archivePath) {
         project_id: projectId,
         system_key: template.systemKey || template.system_key || null,
         name: String(template.name || 'Template').trim() || 'Template',
+        ai_instructions: String(template.aiInstructions || template.ai_instructions || '').trim(),
+        parent_depth: clampAiDepth(template.parentDepth ?? template.parent_depth),
+        child_depth: clampAiDepth(template.childDepth ?? template.child_depth),
         fields_json: JSON.stringify(normalizeIdentificationFieldDefinitions(template.fields)),
         created_at: now,
         updated_at: now,
@@ -2365,6 +2941,9 @@ function importProjectArchive(archivePath, projectNameOverride = '', ownerUserId
         project_id: projectId,
         system_key: template.systemKey || template.system_key || null,
         name: String(template.name || 'Template').trim() || 'Template',
+        ai_instructions: String(template.aiInstructions || template.ai_instructions || '').trim(),
+        parent_depth: clampAiDepth(template.parentDepth ?? template.parent_depth),
+        child_depth: clampAiDepth(template.childDepth ?? template.child_depth),
         fields_json: JSON.stringify(normalizeIdentificationFieldDefinitions(template.fields)),
         created_at: now,
         updated_at: now,
@@ -3077,10 +3656,62 @@ app.patch('/api/projects/:id/preferences', requireAuth, (req, res, next) => {
   }
 })
 
+app.patch('/api/projects/:id/openai-key', requireAuth, (req, res) => {
+  try {
+    const project = assertProjectOwner(req.params.id, req.user.id)
+    const apiKey = String(req.body?.apiKey || '').trim()
+    if (!apiKey) {
+      return res.json({ ok: false, error: 'API key is required' })
+    }
+
+    updateProjectOpenAiKey({
+      id: project.id,
+      encryptedKey: encryptProjectSecret(apiKey),
+      keyMask: maskProjectApiKey(apiKey),
+    })
+
+    broadcastProjectEvent(project.id)
+    res.json(serializeProject(assertProjectAccess(project.id, req.user.id), req.user.id))
+  } catch (error) {
+    return res.json({
+      ok: false,
+      error:
+        error.message === 'NODETRACE_SECRET_KEY is not configured on the server'
+          ? getProjectSecretConfigurationError()
+          : error.message || 'Unable to save API key',
+    })
+  }
+})
+
+app.delete('/api/projects/:id/openai-key', requireAuth, (req, res) => {
+  try {
+    const project = assertProjectOwner(req.params.id, req.user.id)
+    updateProjectOpenAiKey({
+      id: project.id,
+      encryptedKey: null,
+      keyMask: null,
+    })
+
+    broadcastProjectEvent(project.id)
+    res.json(serializeProject(assertProjectAccess(project.id, req.user.id), req.user.id))
+  } catch (error) {
+    return res.json({
+      ok: false,
+      error:
+        error.message === 'NODETRACE_SECRET_KEY is not configured on the server'
+          ? getProjectSecretConfigurationError()
+          : error.message || 'Unable to clear API key',
+    })
+  }
+})
+
 app.post('/api/projects/:id/templates', requireAuth, (req, res, next) => {
   try {
     const project = assertProjectAccess(req.params.id, req.user.id)
     const name = String(req.body?.name || '').trim()
+    const aiInstructions = String(req.body?.aiInstructions || '').trim()
+    const parentDepth = clampAiDepth(req.body?.parentDepth)
+    const childDepth = clampAiDepth(req.body?.childDepth)
     const fields = normalizeIdentificationFieldDefinitions(req.body?.fields)
     if (!name) {
       return res.json({ ok: false, error: 'Template name is required' })
@@ -3092,6 +3723,9 @@ app.post('/api/projects/:id/templates', requireAuth, (req, res, next) => {
       project_id: project.id,
       system_key: null,
       name,
+      ai_instructions: aiInstructions,
+      parent_depth: parentDepth,
+      child_depth: childDepth,
       fields_json: JSON.stringify(fields),
       created_at: now,
       updated_at: now,
@@ -3115,6 +3749,9 @@ app.patch('/api/projects/:id/templates/:templateId', requireAuth, (req, res, nex
       return res.json({ ok: false, error: 'Built-in templates cannot be edited' })
     }
     const name = String(req.body?.name || '').trim()
+    const aiInstructions = String(req.body?.aiInstructions || '').trim()
+    const parentDepth = clampAiDepth(req.body?.parentDepth)
+    const childDepth = clampAiDepth(req.body?.childDepth)
     const fields = normalizeIdentificationFieldDefinitions(req.body?.fields)
     if (!name) {
       return res.json({ ok: false, error: 'Template name is required' })
@@ -3123,6 +3760,9 @@ app.patch('/api/projects/:id/templates/:templateId', requireAuth, (req, res, nex
     updateIdentificationTemplate({
       templateId: template.id,
       name,
+      aiInstructions,
+      parentDepth,
+      childDepth,
       fields,
     })
     broadcastProjectEvent(project.id)
@@ -3681,6 +4321,108 @@ app.patch('/api/nodes/:id/identification/fields/:fieldKey', requireAuth, (req, r
     res.json({ ok: true, node: serializeNodeForUser(assertNode(node.id), req.user.id) })
   } catch (error) {
     next(error)
+  }
+})
+
+app.post('/api/nodes/:id/identification/ai-fill', requireAuth, async (req, res) => {
+  try {
+    const node = assertNodeAccess(req.params.id, req.user.id)
+    const project = assertProjectAccess(node.project_id, req.user.id)
+    if (!project.openai_api_key_encrypted) {
+      return res.json({ ok: false, error: 'No project OpenAI API key is configured' })
+    }
+
+    const apiKey = decryptProjectSecret(project.openai_api_key_encrypted)
+    const assignment = getNodeIdentification.get(node.id)
+    if (!assignment) {
+      return res.json({ ok: false, error: 'Apply a template before using AI fill' })
+    }
+
+    const template = assertIdentificationTemplateAccess(assignment.template_id, node.project_id)
+    const templateRowsById = new Map([[template.id, serializeIdentificationTemplate(template)]])
+    const projectTemplatesById = new Map(
+      ensureDefaultIdentificationTemplates(node.project_id)
+        .map(serializeIdentificationTemplate)
+        .map((templateRow) => [templateRow.id, templateRow]),
+    )
+    const identificationRowsByNodeId = new Map(
+      listNodeIdentificationsByProject.all(node.project_id).map((item) => [item.node_id, item]),
+    )
+    const fieldRowsByNodeId = new Map()
+    for (const fieldRow of listNodeIdentificationFieldValuesByProject.all(node.project_id)) {
+      const items = fieldRowsByNodeId.get(fieldRow.node_id) || []
+      items.push(fieldRow)
+      fieldRowsByNodeId.set(fieldRow.node_id, items)
+    }
+    const identification = buildNodeIdentification(node.id, templateRowsById, identificationRowsByNodeId, fieldRowsByNodeId)
+    if (!identification) {
+      return res.json({ ok: false, error: 'Unable to build identification context for this node' })
+    }
+
+    const projectNodes = getProjectNodes.all(node.project_id)
+    const identificationByNodeId = new Map(
+      projectNodes.map((projectNode) => [
+        projectNode.id,
+        buildNodeIdentification(projectNode.id, projectTemplatesById, identificationRowsByNodeId, fieldRowsByNodeId),
+      ]),
+    )
+    const { updates, message } = await runOpenAiIdentification({
+      node,
+      projectNodes,
+      identification,
+      identificationByNodeId,
+      apiKey,
+    })
+
+    if (updates.length === 0) {
+      return res.json({ ok: true, node: serializeNodeForUser(assertNode(node.id), req.user.id), message })
+    }
+
+    const now = new Date().toISOString()
+    const templateFields = serializeIdentificationTemplate(template).fields
+    for (const update of updates) {
+      const field = templateFields.find((item) => item.key === update.key)
+      if (!field) {
+        continue
+      }
+      const existing = getNodeIdentificationFieldValue.get(node.id, field.key)
+      if (existing?.reviewed) {
+        continue
+      }
+      upsertNodeIdentificationFieldValue.run({
+        node_id: node.id,
+        field_key: field.key,
+        value_json: JSON.stringify(normalizeIdentificationFieldValue(field, update.value)),
+        reviewed: 0,
+        reviewed_by_user_id: null,
+        reviewed_at: null,
+        source: 'ai',
+        ai_suggestion_json: JSON.stringify({
+          value: normalizeIdentificationFieldValue(field, update.value),
+          confidence: update.confidence,
+          evidence: update.evidence,
+          rationale: update.rationale,
+          usedImageIds: update.usedImageIds,
+          usedNodeIds: update.usedNodeIds,
+          sourceStrength: update.sourceStrength,
+          model: OPENAI_IDENTIFICATION_MODEL,
+          createdAt: now,
+        }),
+        updated_at: now,
+      })
+    }
+
+    updateProjectTimestamp.run(now, node.project_id)
+    broadcastProjectEvent(node.project_id)
+    res.json({ ok: true, node: serializeNodeForUser(assertNode(node.id), req.user.id), message })
+  } catch (error) {
+    return res.json({
+      ok: false,
+      error:
+        error.message === 'NODETRACE_SECRET_KEY is not configured on the server'
+          ? getProjectSecretConfigurationError()
+          : error.message || 'Unable to run AI fill',
+    })
   }
 })
 

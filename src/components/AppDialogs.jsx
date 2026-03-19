@@ -27,12 +27,14 @@ export default function AppDialogs({
   importInputRef,
   importProject,
   importProjectName,
+  projectApiKeyInput,
   identificationTemplateRemovalNode,
   mobileConnectionCount,
   newFolderDialog,
   newFolderName,
   projects,
   renameProject,
+  saveProjectOpenAiKey,
   selectedNode,
   selectedProjectId,
   sessionDialogOpen,
@@ -45,6 +47,7 @@ export default function AppDialogs({
   setImportProjectName,
   setNewFolderDialog,
   setNewFolderName,
+  setProjectApiKeyInput,
   setSessionDialogOpen,
   setShowProjectDialog,
   setShowProjectId,
@@ -248,6 +251,41 @@ export default function AppDialogs({
                 className="primary-button"
                 disabled={busy || !projectName.trim()}
                 onClick={renameProject}
+                type="button"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showProjectDialog === 'openai-key' ? (
+        <div className="dialog-backdrop" onClick={() => !busy && setShowProjectDialog(null)} role="presentation">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter(event, saveProjectOpenAiKey, Boolean(projectApiKeyInput.trim()) && !busy)}
+            role="dialog"
+          >
+            <div className="dialog__title">Project OpenAI API Key</div>
+            <input
+              autoFocus
+              placeholder="sk-..."
+              type="password"
+              value={projectApiKeyInput}
+              onChange={(event) => setProjectApiKeyInput(event.target.value)}
+            />
+            <div className="inspector__notice">This key is stored server-side and shared by collaborators on this project.</div>
+            {error ? <div className="inspector__notice error">{error}</div> : null}
+            <div className="dialog__actions">
+              <button className="ghost-button" disabled={busy} onClick={() => setShowProjectDialog(null)} type="button">
+                Cancel
+              </button>
+              <button
+                className="ghost-button"
+                disabled={busy || !projectApiKeyInput.trim()}
+                onClick={saveProjectOpenAiKey}
                 type="button"
               >
                 Save

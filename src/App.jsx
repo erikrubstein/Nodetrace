@@ -6,6 +6,7 @@ import AuthScreen from './components/AuthScreen'
 import CameraPanel from './components/CameraPanel'
 import CanvasWorkspace from './components/CanvasWorkspace'
 import DockedSidebar from './components/DockedSidebar'
+import FieldsPanel from './components/FieldsPanel'
 import InspectorPanel from './components/InspectorPanel'
 import PreviewPanel from './components/PreviewPanel'
 import SidebarRail from './components/SidebarRail'
@@ -38,6 +39,7 @@ import {
   GridIcon,
   IdentificationIcon,
   PreviewIcon,
+  TemplatesIcon,
   UserIcon,
   WrenchIcon,
 } from './components/icons'
@@ -61,6 +63,7 @@ function App() {
   const [templateDialog, setTemplateDialog] = useState(null)
   const [selectedTemplateEditorId, setSelectedTemplateEditorId] = useState(null)
   const [projectName, setProjectName] = useState('')
+  const [projectApiKeyInput, setProjectApiKeyInput] = useState('')
   const [newFolderDialog, setNewFolderDialog] = useState(null)
   const [newFolderName, setNewFolderName] = useState('New Folder')
   const [exportFileName, setExportFileName] = useState('')
@@ -98,6 +101,7 @@ function App() {
   const [collaboratorUsername, setCollaboratorUsername] = useState('')
   const [accountDialog, setAccountDialog] = useState(null)
   const [accountStatus, setAccountStatus] = useState('')
+  const [aiFillNodeId, setAiFillNodeId] = useState(null)
   const [accountForm, setAccountForm] = useState({
     username: '',
     currentPassword: '',
@@ -106,6 +110,9 @@ function App() {
   })
   const [templateForm, setTemplateForm] = useState({
     name: '',
+    aiInstructions: '',
+    parentDepth: 0,
+    childDepth: 0,
     fields: [],
   })
   const fileInputRef = useRef(null)
@@ -372,22 +379,30 @@ function App() {
     }
     const currentSignature = JSON.stringify({
       name: templateForm.name,
+      aiInstructions: templateForm.aiInstructions,
+      parentDepth: templateForm.parentDepth,
+      childDepth: templateForm.childDepth,
       fields: templateForm.fields.map((field) => ({
         key: field.key,
         label: field.label,
         type: field.type,
+        mode: field.mode,
       })),
     })
     const originalSignature = JSON.stringify({
       name: selectedTemplateEditor.name,
+      aiInstructions: selectedTemplateEditor.aiInstructions || '',
+      parentDepth: Number(selectedTemplateEditor.parentDepth || 0),
+      childDepth: Number(selectedTemplateEditor.childDepth || 0),
       fields: (selectedTemplateEditor.fields || []).map((field) => ({
         key: field.key,
         label: field.label,
         type: field.type,
+        mode: field.mode,
       })),
     })
     return currentSignature !== originalSignature
-  }, [selectedTemplateEditor, templateForm.fields, templateForm.name])
+  }, [selectedTemplateEditor, templateForm.aiInstructions, templateForm.childDepth, templateForm.fields, templateForm.name, templateForm.parentDepth])
   const selectedNodePath = useMemo(
     () => compactNodePath(buildNodePath(tree?.nodes, selectedNodeId)),
     [selectedNodeId, tree?.nodes],
@@ -540,12 +555,16 @@ function App() {
       }
       setTemplateForm({
         name: currentTemplate.name || '',
+        aiInstructions: currentTemplate.aiInstructions || '',
         fields:
           currentTemplate.fields?.map((field) => ({
             id: `${currentTemplate.id}-${field.key}`,
             key: field.key,
             label: field.label,
             type: field.type,
+            mode: field.mode || 'manual',
+            parentDepth: Number(field.parentDepth || 0),
+            childDepth: Number(field.childDepth || 0),
           })) || [],
       })
       return
@@ -555,12 +574,16 @@ function App() {
     setSelectedTemplateEditorId(firstTemplate.id)
     setTemplateForm({
       name: firstTemplate.name || '',
+      aiInstructions: firstTemplate.aiInstructions || '',
       fields:
         firstTemplate.fields?.map((field) => ({
           id: `${firstTemplate.id}-${field.key}`,
           key: field.key,
           label: field.label,
           type: field.type,
+          mode: field.mode || 'manual',
+          parentDepth: Number(field.parentDepth || 0),
+          childDepth: Number(field.childDepth || 0),
         })) || [],
     })
   }, [hasTemplateChanges, identificationTemplates, selectedTemplateEditorId])
@@ -1350,6 +1373,7 @@ function App() {
       key: '',
       label: '',
       type: 'text',
+      mode: 'manual',
     }
   }
 
@@ -1395,6 +1419,9 @@ function App() {
         selectedProjectId,
         {
           name: templateForm.name,
+          aiInstructions: templateForm.aiInstructions,
+          parentDepth: templateForm.parentDepth,
+          childDepth: templateForm.childDepth,
           fields: templateForm.fields,
         },
         effectiveMode === 'confirm-save' ? effectiveTemplateId : null,
@@ -1491,6 +1518,34 @@ function App() {
     }
   }
 
+  async function runIdentificationAiFillRequest(nodeId) {
+    if (!nodeId) {
+      return
+    }
+    setAiFillNodeId(nodeId)
+    setBusy(true)
+    setError('')
+    try {
+      const response = await api(`/api/nodes/${nodeId}/identification/ai-fill`, {
+        method: 'POST',
+      })
+      if (response?.ok === false) {
+        throw new Error(response.error || 'Unable to run AI fill')
+      }
+      if (response?.node) {
+        applyNodeUpdate(response.node)
+      }
+      if (response?.message) {
+        setStatus(response.message)
+      }
+    } catch (runError) {
+      setError(runError.message)
+    } finally {
+      setAiFillNodeId(null)
+      setBusy(false)
+    }
+  }
+
   function selectTemplateEditor(templateId) {
     const template = identificationTemplates.find((item) => item.id === templateId)
     if (!template) {
@@ -1499,12 +1554,16 @@ function App() {
     setSelectedTemplateEditorId(template.id)
     setTemplateForm({
       name: template.name || '',
+      aiInstructions: template.aiInstructions || '',
+      parentDepth: Number(template.parentDepth || 0),
+      childDepth: Number(template.childDepth || 0),
       fields:
         template.fields?.map((field) => ({
           id: `${template.id}-${field.key}`,
           key: field.key,
           label: field.label,
           type: field.type,
+          mode: field.mode || 'manual',
         })) || [],
     })
   }
@@ -1518,6 +1577,9 @@ function App() {
     try {
       const nextTree = await createOrUpdateTemplateRequest(selectedProjectId, {
         name: 'New Template',
+        aiInstructions: '',
+        parentDepth: 0,
+        childDepth: 0,
         fields: [],
       })
       const nextTemplate = nextTree?.project?.identificationTemplates?.at(-1) || null
@@ -1525,11 +1587,15 @@ function App() {
         setSelectedTemplateEditorId(nextTemplate.id)
         setTemplateForm({
           name: nextTemplate.name || '',
+          aiInstructions: nextTemplate.aiInstructions || '',
+          parentDepth: Number(nextTemplate.parentDepth || 0),
+          childDepth: Number(nextTemplate.childDepth || 0),
           fields: (nextTemplate.fields || []).map((field) => ({
             id: `${nextTemplate.id}-${field.key || Math.random().toString(36).slice(2, 8)}`,
             key: field.key,
             label: field.label,
             type: field.type,
+            mode: field.mode || 'manual',
           })),
         })
       }
@@ -1549,10 +1615,14 @@ function App() {
     try {
       const nextTree = await createOrUpdateTemplateRequest(selectedProjectId, {
         name: `${selectedTemplateEditor.name} Copy`,
+        aiInstructions: templateForm.aiInstructions,
+        parentDepth: templateForm.parentDepth,
+        childDepth: templateForm.childDepth,
         fields: templateForm.fields.map((field) => ({
           key: field.key,
           label: field.label,
           type: field.type,
+          mode: field.mode,
         })),
       })
       const nextTemplate = nextTree?.project?.identificationTemplates?.at(-1) || null
@@ -1560,11 +1630,15 @@ function App() {
         setSelectedTemplateEditorId(nextTemplate.id)
         setTemplateForm({
           name: nextTemplate.name || '',
+          aiInstructions: nextTemplate.aiInstructions || '',
+          parentDepth: Number(nextTemplate.parentDepth || 0),
+          childDepth: Number(nextTemplate.childDepth || 0),
           fields: (nextTemplate.fields || []).map((field) => ({
             id: `${nextTemplate.id}-${field.key || Math.random().toString(36).slice(2, 8)}`,
             key: field.key,
             label: field.label,
             type: field.type,
+            mode: field.mode || 'manual',
           })),
         })
       }
@@ -1578,6 +1652,17 @@ function App() {
   function updateTemplateField(action, index = null, value = null) {
     if (action === 'name') {
       setTemplateForm((current) => ({ ...current, name: String(value || '') }))
+      return
+    }
+    if (action === 'aiInstructions') {
+      setTemplateForm((current) => ({ ...current, aiInstructions: String(value || '') }))
+      return
+    }
+    if (action === 'parentDepth' || action === 'childDepth') {
+      setTemplateForm((current) => ({
+        ...current,
+        [action]: Math.max(0, Math.min(5, Number.parseInt(value, 10) || 0)),
+      }))
       return
     }
     if (action === 'add') {
@@ -1595,7 +1680,12 @@ function App() {
     setTemplateForm((current) => ({
       ...current,
       fields: current.fields.map((field, currentIndex) =>
-        currentIndex === index ? { ...field, [action]: value } : field,
+        currentIndex === index
+          ? {
+              ...field,
+              [action]: value,
+            }
+          : field,
       ),
     }))
   }
@@ -1609,18 +1699,25 @@ function App() {
       key: String(field.key || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
       label: String(field.label || '').trim(),
       type: field.type || 'text',
+      mode: field.mode || 'manual',
     }))
     const nextFields = templateForm.fields.map((field) => ({
       key: String(field.key || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
       label: String(field.label || '').trim(),
       type: field.type || 'text',
+      mode: field.mode || 'manual',
     }))
     const modifiesExistingField = originalFields.some((field, index) => {
       const nextField = nextFields[index]
       if (!nextField) {
         return true
       }
-      return field.key !== nextField.key || field.label !== nextField.label || field.type !== nextField.type
+      return (
+        field.key !== nextField.key ||
+        field.label !== nextField.label ||
+        field.type !== nextField.type ||
+        field.mode !== nextField.mode
+      )
     })
     const affectsData = Number(selectedTemplateEditor.usageCount || 0) > 0 && modifiesExistingField
     if (!affectsData) {
@@ -1742,6 +1839,58 @@ function App() {
 
   async function resetProjectSettings() {
     await persistProjectSettings(defaultProjectSettings)
+  }
+
+  async function saveProjectOpenAiKey() {
+    if (!selectedProjectId || !projectApiKeyInput.trim()) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      const payload = await api(`/api/projects/${selectedProjectId}/openai-key`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: projectApiKeyInput.trim() }),
+      })
+      if (payload?.ok === false) {
+        setError(payload.error || 'Unable to save API key')
+        return
+      }
+      applyProjectUpdate(payload)
+      setProjectApiKeyInput('')
+      setShowProjectDialog(null)
+      setStatus('Project OpenAI API key updated.')
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function clearProjectOpenAiKey() {
+    if (!selectedProjectId) {
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      const payload = await api(`/api/projects/${selectedProjectId}/openai-key`, {
+        method: 'DELETE',
+      })
+      if (payload?.ok === false) {
+        setError(payload.error || 'Unable to clear API key')
+        return
+      }
+      applyProjectUpdate(payload)
+      setStatus('Project OpenAI API key removed.')
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function addCollaborator() {
@@ -2655,7 +2804,6 @@ function App() {
           <InspectorPanel
             busy={busy}
             bulkSelectionCount={bulkSelectionCount}
-            clearError={() => setError('')}
             editForm={editForm}
             editTargetNode={editTargetNode}
             error={error}
@@ -2668,13 +2816,29 @@ function App() {
               setError('')
               setShowProjectDialog('apply-template')
             }}
-            patchIdentificationField={patchIdentificationFieldRequest}
             saveNodeDraft={saveNodeDraft}
             selectedNode={selectedNode}
             setDeleteNodeOpen={setDeleteNodeOpen}
             setEditForm={setEditForm}
             setRemoveIdentificationNodeId={setIdentificationTemplateRemovalNodeId}
             status={status}
+          />
+        ),
+      },
+      fields: {
+        id: 'fields',
+        title: 'Data',
+        icon: <TemplatesIcon />,
+        content: (
+          <FieldsPanel
+            key={`${selectedNode?.id || 'none'}:${selectedNode?.identification?.templateId || 'none'}`}
+            aiFillRunning={aiFillNodeId === selectedNode?.id}
+            busy={busy}
+            clearError={() => setError('')}
+            identification={selectedNode?.identification || null}
+            patchIdentificationField={patchIdentificationFieldRequest}
+            runIdentificationAiFill={runIdentificationAiFillRequest}
+            selectedNode={selectedNode}
           />
         ),
       },
@@ -2710,10 +2874,18 @@ function App() {
             addCollaborator={addCollaborator}
             busy={busy}
             canManageUsers={Boolean(tree?.project?.canManageUsers)}
+            canManageProjectSecrets={Boolean(tree?.project?.canManageUsers)}
             clearError={() => setError('')}
             collaborators={tree?.project?.collaborators || []}
             currentUsername={currentUser?.username || ''}
             error={error}
+            hasProjectOpenAiKey={Boolean(tree?.project?.openAiApiKeyConfigured)}
+            openAiApiKeyMask={tree?.project?.openAiApiKeyMask || ''}
+            openOpenAiKeyDialog={() => {
+              setError('')
+              setProjectApiKeyInput('')
+              setShowProjectDialog('openai-key')
+            }}
             ownerUsername={tree?.project?.ownerUsername || ''}
             openRenameProjectDialog={() => {
               setError('')
@@ -2724,6 +2896,7 @@ function App() {
             projectId={tree?.project?.id}
             projectSettings={projectSettings}
             resetProjectSettings={resetProjectSettings}
+            clearProjectOpenAiKey={clearProjectOpenAiKey}
             removeCollaborator={removeCollaborator}
             setCollaboratorUsername={setCollaboratorUsername}
           />
@@ -2971,6 +3144,7 @@ function App() {
         importInputRef={importInputRef}
         importProject={importProject}
         importProjectName={importProjectName}
+        projectApiKeyInput={projectApiKeyInput}
         identificationTemplateRemovalNode={identificationTemplateRemovalNode}
         mobileConnectionCount={mobileConnectionCount}
         newFolderDialog={newFolderDialog}
@@ -2978,6 +3152,7 @@ function App() {
         projectName={projectName}
         projects={projects}
         renameProject={renameProject}
+        saveProjectOpenAiKey={saveProjectOpenAiKey}
         selectedNode={selectedNode}
         selectedProjectId={selectedProjectId}
         sessionDialogOpen={sessionDialogOpen}
@@ -2990,6 +3165,7 @@ function App() {
         setImportProjectName={setImportProjectName}
         setNewFolderDialog={setNewFolderDialog}
         setNewFolderName={setNewFolderName}
+        setProjectApiKeyInput={setProjectApiKeyInput}
         setProjectName={setProjectName}
         setSessionDialogOpen={setSessionDialogOpen}
         setShowProjectDialog={setShowProjectDialog}

@@ -1,9 +1,6 @@
-import IdentificationPanel from './IdentificationPanel'
-
 export default function InspectorPanel({
   busy,
   bulkSelectionCount,
-  clearError,
   editForm,
   editTargetNode,
   error,
@@ -13,7 +10,6 @@ export default function InspectorPanel({
   identification,
   nameInputRef,
   openApplyTemplateDialog,
-  patchIdentificationField,
   saveNodeDraft,
   selectedNode,
   setDeleteNodeOpen,
@@ -70,17 +66,33 @@ export default function InspectorPanel({
             </label>
           </div>
 
-          <IdentificationPanel
-            key={`${selectedNode.id}:${selectedNode.identification?.templateId || 'none'}`}
-            busy={busy}
-            clearError={clearError}
-            hasAvailableTemplates={hasIdentificationTemplates}
-            identification={identification}
-            openApplyTemplateDialog={openApplyTemplateDialog}
-            patchIdentificationField={patchIdentificationField}
-            selectedNode={selectedNode}
-            setRemoveIdentificationNodeId={setRemoveIdentificationNodeId}
-          />
+          <div className="inspector__section field-stack">
+            <div className="inspector__title">Template</div>
+            {!identification ? (
+              <button
+                className="ghost-button wide"
+                disabled={!hasIdentificationTemplates || busy}
+                onClick={openApplyTemplateDialog}
+                type="button"
+              >
+                Apply Template
+              </button>
+            ) : (
+              <div className="identification-template__row">
+                <span className="identification-template__name">{identification.templateName}</span>
+                <div className="identification-template__actions">
+                  <button
+                    className="ghost-button identification-template__action"
+                    disabled={busy}
+                    onClick={() => setRemoveIdentificationNodeId(selectedNode.id)}
+                    type="button"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="inspector__section field-stack">
             {hasBulkSelection ? (

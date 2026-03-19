@@ -2,11 +2,16 @@ export default function SettingsPanel({
   collaboratorUsername,
   addCollaborator,
   busy,
+  canManageProjectSecrets,
   canManageUsers,
+  clearProjectOpenAiKey,
   clearError,
   collaborators,
   currentUsername,
   error,
+  hasProjectOpenAiKey,
+  openAiApiKeyMask,
+  openOpenAiKeyDialog,
   ownerUsername,
   openRenameProjectDialog,
   persistProjectSettings,
@@ -117,6 +122,28 @@ export default function SettingsPanel({
         <button className="ghost-button settings-panel__reset" disabled={busy} onClick={openRenameProjectDialog} type="button">
           Rename Project
         </button>
+      </section>
+
+      <section className="inspector__section settings-panel__section">
+        <div className="inspector__title">AI</div>
+        <div className="settings-panel__meta-row">
+          <span>OpenAI API Key</span>
+          <strong>{hasProjectOpenAiKey ? openAiApiKeyMask || 'Configured' : 'Not Set'}</strong>
+        </div>
+        {canManageProjectSecrets ? (
+          <div className="templates-panel__actions-bar">
+            <button className="ghost-button" disabled={busy} onClick={openOpenAiKeyDialog} type="button">
+              {hasProjectOpenAiKey ? 'Update Key' : 'Set Key'}
+            </button>
+            {hasProjectOpenAiKey ? (
+              <button className="ghost-button" disabled={busy} onClick={clearProjectOpenAiKey} type="button">
+                Clear Key
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <div className="inspector__notice">The project owner manages this key.</div>
+        )}
       </section>
 
       <section className="inspector__section settings-panel__section">

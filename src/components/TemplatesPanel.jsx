@@ -16,6 +16,7 @@ export default function TemplatesPanel({
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateEditorId) || null
   const isBuiltIn = Boolean(selectedTemplate?.systemKey)
   const canSave = !busy && !isBuiltIn && hasTemplateChanges
+  const hasAiFields = templateForm.fields.some((field) => (field.mode || 'manual') === 'ai')
 
   return (
     <div className="templates-panel">
@@ -59,52 +60,113 @@ export default function TemplatesPanel({
           />
         </label>
 
+        {hasAiFields ? (
+          <>
+            <label>
+              <span>AI Instructions</span>
+              <textarea
+                disabled={isBuiltIn}
+                placeholder="Describe how AI should use scoped node text and images for this template."
+                rows="5"
+                value={templateForm.aiInstructions || ''}
+                onChange={(event) => {
+                  clearError()
+                  updateTemplateField('aiInstructions', null, event.target.value)
+                }}
+              />
+            </label>
+            <div className="template-field-editor__depths">
+              <label>
+                <span>Parent depth</span>
+                <input
+                  disabled={isBuiltIn}
+                  max="5"
+                  min="0"
+                  type="number"
+                  value={templateForm.parentDepth ?? 0}
+                  onChange={(event) => {
+                    clearError()
+                    updateTemplateField('parentDepth', null, event.target.value)
+                  }}
+                />
+              </label>
+              <label>
+                <span>Child depth</span>
+                <input
+                  disabled={isBuiltIn}
+                  max="5"
+                  min="0"
+                  type="number"
+                  value={templateForm.childDepth ?? 0}
+                  onChange={(event) => {
+                    clearError()
+                    updateTemplateField('childDepth', null, event.target.value)
+                  }}
+                />
+              </label>
+            </div>
+          </>
+        ) : null}
+
         <label className="templates-panel__field-group">
           <span>Fields</span>
           <div className="template-field-editor">
             {templateForm.fields.map((field, index) => (
-              <div className="template-field-editor__row" key={field.id || index}>
-                <input
-                  disabled={isBuiltIn}
-                  placeholder="Label"
-                  value={field.label}
-                  onChange={(event) => {
-                    clearError()
-                    updateTemplateField('label', index, event.target.value)
-                  }}
-                />
-                <input
-                  disabled={isBuiltIn}
-                  placeholder="key_name"
-                  value={field.key}
-                  onChange={(event) => {
-                    clearError()
-                    updateTemplateField('key', index, event.target.value)
-                  }}
-                />
-                <select
-                  disabled={isBuiltIn}
-                  value={field.type}
-                  onChange={(event) => {
-                    clearError()
-                    updateTemplateField('type', index, event.target.value)
-                  }}
-                >
-                  <option value="text">Text</option>
-                  <option value="multiline">Multiline</option>
-                </select>
-                <button
-                  aria-label={`Remove ${field.label || 'field'}`}
-                  className="tool-button template-field-editor__remove-button"
-                  disabled={busy || isBuiltIn}
-                  onClick={() => {
-                    clearError()
-                    updateTemplateField('remove', index)
-                  }}
-                  type="button"
-                >
-                  <i aria-hidden="true" className="fa-solid fa-xmark" />
-                </button>
+              <div className="template-field-editor__field" key={field.id || index}>
+                <div className="template-field-editor__row">
+                  <input
+                    disabled={isBuiltIn}
+                    placeholder="Label"
+                    value={field.label}
+                    onChange={(event) => {
+                      clearError()
+                      updateTemplateField('label', index, event.target.value)
+                    }}
+                  />
+                  <input
+                    disabled={isBuiltIn}
+                    placeholder="key_name"
+                    value={field.key}
+                    onChange={(event) => {
+                      clearError()
+                      updateTemplateField('key', index, event.target.value)
+                    }}
+                  />
+                  <select
+                    disabled={isBuiltIn}
+                    value={field.mode || 'manual'}
+                    onChange={(event) => {
+                      clearError()
+                      updateTemplateField('mode', index, event.target.value)
+                    }}
+                  >
+                    <option value="manual">Manual</option>
+                    <option value="ai">AI-Assisted</option>
+                  </select>
+                  <select
+                    disabled={isBuiltIn}
+                    value={field.type}
+                    onChange={(event) => {
+                      clearError()
+                      updateTemplateField('type', index, event.target.value)
+                    }}
+                  >
+                    <option value="text">Text</option>
+                    <option value="multiline">Multiline</option>
+                  </select>
+                  <button
+                    aria-label={`Remove ${field.label || 'field'}`}
+                    className="tool-button template-field-editor__remove-button"
+                    disabled={busy || isBuiltIn}
+                    onClick={() => {
+                      clearError()
+                      updateTemplateField('remove', index)
+                    }}
+                    type="button"
+                  >
+                    <i aria-hidden="true" className="fa-solid fa-xmark" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
