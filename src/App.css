@@ -729,6 +729,8 @@ select {
 .graph-node.variant-node .graph-node__meta {
   width: 78px;
   font-size: 0.66rem;
+  align-items: center;
+  text-align: center;
 }
 
 .graph-node__meta span,
