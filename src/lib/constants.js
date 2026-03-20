@@ -29,6 +29,7 @@ export const defaultUserProjectUi = {
   theme: 'dark',
   showGrid: true,
   canvasTransform: null,
+  selectedNodeIds: [],
   leftSidebarOpen: false,
   rightSidebarOpen: true,
   leftSidebarWidth: 340,

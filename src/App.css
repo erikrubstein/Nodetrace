@@ -543,6 +543,14 @@ select {
   user-select: none;
 }
 
+.canvas-marquee {
+  position: absolute;
+  z-index: 16;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+}
+
 .canvas-links {
   position: absolute;
   inset: 0;

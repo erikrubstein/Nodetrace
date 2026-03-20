@@ -83,6 +83,7 @@ const defaultUserProjectUi = {
   theme: 'dark',
   showGrid: true,
   canvasTransform: null,
+  selectedNodeIds: [],
   leftSidebarOpen: false,
   rightSidebarOpen: true,
   leftSidebarWidth: 340,
@@ -1672,6 +1673,11 @@ function normalizeUserProjectUi(uiInput) {
     }
   } else {
     ui.canvasTransform = null
+  }
+  if (Array.isArray(ui.selectedNodeIds)) {
+    ui.selectedNodeIds = Array.from(new Set(ui.selectedNodeIds.map((value) => String(value || '').trim()).filter(Boolean)))
+  } else {
+    ui.selectedNodeIds = []
   }
   const panelDock = {
     ...defaultUserProjectUi.panelDock,

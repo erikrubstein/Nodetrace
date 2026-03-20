@@ -1,6 +1,7 @@
 export default function InspectorPanel({
   busy,
   bulkSelectionCount,
+  bulkTemplateCount,
   editForm,
   editTargetNode,
   error,
@@ -10,6 +11,7 @@ export default function InspectorPanel({
   identification,
   nameInputRef,
   openApplyTemplateDialog,
+  openRemoveTemplateDialog,
   saveNodeDraft,
   selectedNode,
   setDeleteNodeOpen,
@@ -23,7 +25,9 @@ export default function InspectorPanel({
     <>
       <div className="inspector__section">
         <div className="inspector__title">
-          {selectedNode
+          {hasBulkSelection
+            ? 'Selection'
+            : selectedNode
             ? selectedNode.isVariant
               ? selectedNode.type === 'photo'
                 ? 'Variant Photo'
@@ -34,7 +38,7 @@ export default function InspectorPanel({
             : 'Selection'}
         </div>
         {selectedNode ? (
-          <div className="inspector__name">{selectedNode.name}</div>
+          <div className="inspector__name">{hasBulkSelection ? `${bulkSelectionCount} Nodes Selected` : selectedNode.name}</div>
         ) : (
           <div className="inspector__empty">Select a node.</div>
         )}
@@ -42,33 +46,59 @@ export default function InspectorPanel({
 
       {selectedNode ? (
         <>
-          <div className="inspector__section field-stack">
-            <div className="inspector__title">Details</div>
-            <label>
-              <span>Name</span>
-              <input
-                disabled={isRootNode}
-                ref={nameInputRef}
-                value={editForm.name}
-                onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
-                onBlur={() => void saveNodeDraft(editTargetNode, editForm)}
-              />
-            </label>
-            {isRootNode ? <div className="inspector__notice">Root name follows the project name.</div> : null}
-            <label>
-              <span>Notes</span>
-              <textarea
-                rows="7"
-                value={editForm.notes}
-                onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })}
-                onBlur={() => void saveNodeDraft(editTargetNode, editForm)}
-              />
-            </label>
-          </div>
+          {!hasBulkSelection ? (
+            <div className="inspector__section field-stack">
+              <div className="inspector__title">Details</div>
+              <label>
+                <span>Name</span>
+                <input
+                  disabled={isRootNode}
+                  ref={nameInputRef}
+                  value={editForm.name}
+                  onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
+                  onBlur={() => void saveNodeDraft(editTargetNode, editForm)}
+                />
+              </label>
+              {isRootNode ? <div className="inspector__notice">Root name follows the project name.</div> : null}
+              <label>
+                <span>Notes</span>
+                <textarea
+                  rows="7"
+                  value={editForm.notes}
+                  onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })}
+                  onBlur={() => void saveNodeDraft(editTargetNode, editForm)}
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="inspector__section field-stack">
+              <div className="inspector__title">Bulk Actions</div>
+              <div className="inspector__notice">{bulkSelectionCount} nodes selected.</div>
+            </div>
+          )}
 
           <div className="inspector__section field-stack">
             <div className="inspector__title">Template</div>
-            {!identification ? (
+            {hasBulkSelection ? (
+              <>
+                <button
+                  className="ghost-button wide"
+                  disabled={!hasIdentificationTemplates || busy}
+                  onClick={openApplyTemplateDialog}
+                  type="button"
+                >
+                  Apply Template
+                </button>
+                <button
+                  className="ghost-button wide"
+                  disabled={!bulkTemplateCount || busy}
+                  onClick={openRemoveTemplateDialog}
+                  type="button"
+                >
+                  Clear Template
+                </button>
+              </>
+            ) : !identification ? (
               <button
                 className="ghost-button wide"
                 disabled={!hasIdentificationTemplates || busy}
@@ -95,11 +125,6 @@ export default function InspectorPanel({
           </div>
 
           <div className="inspector__section field-stack">
-            {hasBulkSelection ? (
-              <div className="inspector__notice">
-                {bulkSelectionCount} nodes selected for bulk actions. Preview and editing still follow {selectedNode.name}.
-              </div>
-            ) : null}
             <button
               className="danger-button wide"
               disabled={hasLockedSelectionRoot || busy}
@@ -110,16 +135,18 @@ export default function InspectorPanel({
             </button>
           </div>
 
-          <div className="inspector__section inspector__footer">
-            <div className="settings-panel__meta-row">
-              <span>Node Owner</span>
-              <strong>{selectedNode.ownerUsername || 'Unknown'}</strong>
+          {!hasBulkSelection ? (
+            <div className="inspector__section inspector__footer">
+              <div className="settings-panel__meta-row">
+                <span>Node Owner</span>
+                <strong>{selectedNode.ownerUsername || 'Unknown'}</strong>
+              </div>
+              <div className="settings-panel__meta-row">
+                <span>Node ID</span>
+                <strong>{selectedNode.id}</strong>
+              </div>
             </div>
-            <div className="settings-panel__meta-row">
-              <span>Node ID</span>
-              <strong>{selectedNode.id}</strong>
-            </div>
-          </div>
+          ) : null}
         </>
       ) : null}
 

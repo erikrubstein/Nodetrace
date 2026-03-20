@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { getContainedRect } from '../lib/image'
 import { MIN_INSPECTOR_WIDTH, NODE_HEIGHT, NODE_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/constants'
 import { debugLog } from '../lib/debug'
 
 export default function useWorkspaceInteractions({
+  addToEffectiveSelection,
   cameraVisible,
   dragHoverNodeId,
   layout,
@@ -11,12 +12,15 @@ export default function useWorkspaceInteractions({
   previewVisible,
   previewTransform,
   selectedCameraId,
+  selectedNodeIds,
   selectedNode,
+  setContextMenu,
   setCameraDevices,
   setCameraNotice,
   setCameraSelection,
   setDragHoverNodeId,
   setDragPreview,
+  setEffectiveSelection,
   setLeftSidebarWidth,
   setPreviewTransform,
   setRightSidebarWidth,
@@ -36,6 +40,49 @@ export default function useWorkspaceInteractions({
   const cameraStreamRef = useRef(null)
   const cameraSelectRef = useRef(null)
   const cameraSelectionRef = useRef(null)
+  const marqueeRef = useRef(null)
+  const suppressCanvasContextMenuRef = useRef(false)
+  const [canvasMarqueeRect, setCanvasMarqueeRect] = useState(null)
+
+  function beginCanvasPointerDown(event) {
+    if (
+      event.button === 2 &&
+      !event.target.closest('.graph-node') &&
+      !event.target.closest('.canvas-tools') &&
+      !event.target.closest('.canvas-caption') &&
+      viewportRef.current
+    ) {
+      const rect = viewportRef.current.getBoundingClientRect()
+      const startX = event.clientX - rect.left
+      const startY = event.clientY - rect.top
+      marqueeRef.current = {
+        pointerId: event.pointerId,
+        startX,
+        startY,
+        additive: event.shiftKey,
+      }
+      setCanvasMarqueeRect({ x: startX, y: startY, width: 0, height: 0 })
+      setContextMenu(null)
+      viewportRef.current.setPointerCapture(event.pointerId)
+      event.preventDefault()
+      return
+    }
+
+    beginPan(event)
+  }
+
+  function handleCanvasContextMenu(event) {
+    if (suppressCanvasContextMenuRef.current) {
+      suppressCanvasContextMenuRef.current = false
+      event.preventDefault()
+      return
+    }
+
+    if (!event.target.closest('.graph-node')) {
+      event.preventDefault()
+      setContextMenu(null)
+    }
+  }
 
   function beginPan(event) {
     if (event.button !== 0) {
@@ -58,6 +105,23 @@ export default function useWorkspaceInteractions({
   }
 
   function handleCanvasPointerMove(event) {
+    const marqueeState = marqueeRef.current
+    if (marqueeState && marqueeState.pointerId === event.pointerId) {
+      const rect = viewportRef.current?.getBoundingClientRect()
+      if (!rect) {
+        return
+      }
+      const currentX = event.clientX - rect.left
+      const currentY = event.clientY - rect.top
+      setCanvasMarqueeRect({
+        x: Math.min(marqueeState.startX, currentX),
+        y: Math.min(marqueeState.startY, currentY),
+        width: Math.abs(currentX - marqueeState.startX),
+        height: Math.abs(currentY - marqueeState.startY),
+      })
+      return
+    }
+
     const panState = panRef.current
     if (!panState || panState.pointerId !== event.pointerId) {
       return
@@ -398,6 +462,48 @@ export default function useWorkspaceInteractions({
     }
 
     function handlePointerUp(event) {
+      if (marqueeRef.current && marqueeRef.current.pointerId === event.pointerId) {
+        const marqueeState = marqueeRef.current
+        marqueeRef.current = null
+        viewportRef.current?.releasePointerCapture(event.pointerId)
+        const selectionRect = canvasMarqueeRect
+        setCanvasMarqueeRect(null)
+        suppressCanvasContextMenuRef.current = Boolean(selectionRect && (selectionRect.width > 3 || selectionRect.height > 3))
+
+        if (selectionRect && (selectionRect.width > 3 || selectionRect.height > 3)) {
+          const viewportRect = viewportRef.current?.getBoundingClientRect()
+          if (viewportRect) {
+            const selectedIds = layout.nodes
+              .filter((item) => item.node.type !== 'collapsed-group')
+              .filter((item) => {
+                const nodeElement = viewportRef.current?.querySelector(`[data-node-id="${item.id}"]`)
+                const nodeRect = nodeElement?.getBoundingClientRect()
+                if (!nodeRect) {
+                  return false
+                }
+                const left = nodeRect.left - viewportRect.left
+                const top = nodeRect.top - viewportRect.top
+                const right = left + nodeRect.width
+                const bottom = top + nodeRect.height
+                return (
+                  right >= selectionRect.x &&
+                  left <= selectionRect.x + selectionRect.width &&
+                  bottom >= selectionRect.y &&
+                  top <= selectionRect.y + selectionRect.height
+                )
+              })
+              .map((item) => item.id)
+
+            if (marqueeState.additive) {
+              addToEffectiveSelection(selectedIds, selectedNodeIds[0] || selectedIds[0] || null)
+            } else {
+              setEffectiveSelection(selectedIds, selectedIds[0] || null)
+            }
+          }
+        }
+        return
+      }
+
       if (nodeDragRef.current) {
         const dragState = nodeDragRef.current
         const targetNodeId = dragHoverNodeId
@@ -430,6 +536,10 @@ export default function useWorkspaceInteractions({
     finishCameraSelection,
     layout.nodes,
     moveDraggedNode,
+    addToEffectiveSelection,
+    canvasMarqueeRect,
+    selectedNodeIds,
+    setEffectiveSelection,
     setCameraSelection,
     setDragHoverNodeId,
     setDragPreview,
@@ -582,12 +692,15 @@ export default function useWorkspaceInteractions({
 
   return {
     beginCameraSelection,
+    beginCanvasPointerDown,
     beginNodeDrag,
     beginPan,
     beginPreviewPan,
+    canvasMarqueeRect,
     cameraVideoRef,
     cameraViewportRef,
     captureFullCameraFrame,
+    handleCanvasContextMenu,
     focusSelectedNode,
     fitCanvasToView,
     handleCanvasPointerMove,

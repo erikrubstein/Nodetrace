@@ -99,7 +99,7 @@ function App() {
   const [transferProgress, setTransferProgress] = useState(null)
   const [deleteProjectText, setDeleteProjectText] = useState('')
   const [deleteNodeOpen, setDeleteNodeOpen] = useState(false)
-  const [identificationTemplateRemovalNodeId, setIdentificationTemplateRemovalNodeId] = useState(null)
+  const [identificationTemplateRemoval, setIdentificationTemplateRemoval] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
   const [sidebarContextMenu, setSidebarContextMenu] = useState(null)
   const [dragActive, setDragActive] = useState(false)
@@ -217,14 +217,6 @@ function App() {
     }
   }
 
-  function toggleMultiSelection(nodeId) {
-    if (!nodeId || nodeId === selectedNodeId) {
-      return
-    }
-    setMultiSelectedNodeIds((current) =>
-      current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId],
-    )
-  }
 
   function toggleSidebarPanel(panelId) {
     const side = panelDock[panelId]
@@ -413,17 +405,58 @@ function App() {
     () => [selectedNodeId, ...multiSelectedNodeIds].filter(Boolean),
     [multiSelectedNodeIds, selectedNodeId],
   )
+  const explicitSelectedNodes = useMemo(
+    () => effectiveSelectedNodeIds.map((nodeId) => tree?.nodes.find((node) => node.id === nodeId)).filter(Boolean),
+    [effectiveSelectedNodeIds, tree?.nodes],
+  )
   const effectiveSelectedRootIds = useMemo(
     () => getSelectionRootIds(tree?.root, effectiveSelectedNodeIds),
     [effectiveSelectedNodeIds, tree?.root],
   )
-  const effectiveSelectedNodes = useMemo(
+  const effectiveSelectedActionNodes = useMemo(
     () => effectiveSelectedRootIds.map((nodeId) => tree?.nodes.find((node) => node.id === nodeId)).filter(Boolean),
     [effectiveSelectedRootIds, tree?.nodes],
   )
-  const bulkSelectionCount = effectiveSelectedNodes.length
+  const bulkSelectionCount = effectiveSelectedNodeIds.length
   const hasBulkSelection = bulkSelectionCount > 1
-  const hasLockedSelectionRoot = effectiveSelectedNodes.some((node) => node.parent_id == null && !node.isVariant)
+  const hasLockedSelectionRoot = explicitSelectedNodes.some((node) => node.parent_id == null && !node.isVariant)
+  const selectionNodesWithTemplates = useMemo(
+    () => explicitSelectedNodes.filter((node) => node.identification),
+    [explicitSelectedNodes],
+  )
+  const setEffectiveSelection = useCallback((nodeIds, preferredPrimaryId = null) => {
+    const validIds = Array.from(new Set((nodeIds || []).filter(Boolean))).filter(
+      (nodeId) => !tree?.nodes || tree.nodes.some((node) => node.id === nodeId),
+    )
+    const nextPrimaryId =
+      preferredPrimaryId && validIds.includes(preferredPrimaryId)
+        ? preferredPrimaryId
+        : validIds[0] || null
+    setSelectedNodeId(nextPrimaryId)
+    setMultiSelectedNodeIds(validIds.filter((nodeId) => nodeId !== nextPrimaryId))
+  }, [tree?.nodes])
+  const addToEffectiveSelection = useCallback((nodeIds, preferredPrimaryId = null) => {
+    const mergedIds = Array.from(new Set([...effectiveSelectedNodeIds, ...(nodeIds || []).filter(Boolean)]))
+    const nextPrimaryId =
+      preferredPrimaryId && mergedIds.includes(preferredPrimaryId)
+        ? preferredPrimaryId
+        : selectedNodeId && mergedIds.includes(selectedNodeId)
+          ? selectedNodeId
+          : mergedIds[0] || null
+    setEffectiveSelection(mergedIds, nextPrimaryId)
+  }, [effectiveSelectedNodeIds, selectedNodeId, setEffectiveSelection])
+  const toggleMultiSelection = useCallback((nodeId) => {
+    if (!nodeId) {
+      return
+    }
+    if (!effectiveSelectedNodeIds.includes(nodeId)) {
+      addToEffectiveSelection([nodeId], selectedNodeId || nodeId)
+      return
+    }
+    const remainingIds = effectiveSelectedNodeIds.filter((id) => id !== nodeId)
+    const nextPrimaryId = nodeId === selectedNodeId ? remainingIds[0] || null : selectedNodeId
+    setEffectiveSelection(remainingIds, nextPrimaryId)
+  }, [addToEffectiveSelection, effectiveSelectedNodeIds, selectedNodeId, setEffectiveSelection])
   const focusPathContext = useMemo(
     () =>
       focusPathMode
@@ -442,8 +475,17 @@ function App() {
   )
   const layout = useMemo(() => buildLayout(visibleRoot, projectSettings), [projectSettings, visibleRoot])
   const contextMenuNode = tree?.nodes.find((node) => node.id === contextMenu?.nodeId) || null
-  const identificationTemplateRemovalNode =
-    tree?.nodes.find((node) => node.id === identificationTemplateRemovalNodeId) || null
+  const identificationTemplateRemovalNodeIds = useMemo(
+    () => identificationTemplateRemoval?.nodeIds || [],
+    [identificationTemplateRemoval],
+  )
+  const identificationTemplateRemovalNodes = useMemo(
+    () => identificationTemplateRemovalNodeIds
+      .map((nodeId) => tree?.nodes.find((node) => node.id === nodeId))
+      .filter(Boolean),
+    [identificationTemplateRemovalNodeIds, tree?.nodes],
+  )
+  const identificationTemplateRemovalCount = identificationTemplateRemovalNodes.length
   const identificationTemplates = useMemo(() => tree?.project?.identificationTemplates || [], [tree?.project?.identificationTemplates])
   const remotePresenceUsers = useMemo(
     () =>
@@ -551,6 +593,7 @@ function App() {
       theme: projectUi.theme,
       showGrid: projectUi.showGrid,
       canvasTransform: projectUi.canvasTransform,
+      selectedNodeIds: projectUi.selectedNodeIds,
       leftSidebarOpen: projectUi.leftSidebarOpen,
       rightSidebarOpen: projectUi.rightSidebarOpen,
       leftSidebarWidth: projectUi.leftSidebarWidth,
@@ -569,6 +612,12 @@ function App() {
     setShowGrid(nextUi.showGrid)
     setTransform(nextUi.canvasTransform || { x: 80, y: 80, scale: 1 })
     pendingInitialCanvasFitRef.current = !nextUi.canvasTransform
+    const nextSelectionIds = Array.isArray(nextUi.selectedNodeIds)
+      ? nextUi.selectedNodeIds.filter((nodeId) => (tree?.nodes || []).some((node) => node.id === nodeId))
+      : []
+    if (nextSelectionIds.length) {
+      setEffectiveSelection(nextSelectionIds, nextSelectionIds[0])
+    }
     setLeftSidebarOpen(nextUi.leftSidebarOpen)
     setRightSidebarOpen(nextUi.rightSidebarOpen)
     setLeftSidebarWidth(nextUi.leftSidebarWidth)
@@ -577,7 +626,7 @@ function App() {
     setRightActivePanel(nextUi.rightActivePanel)
     setPanelDock(nextUi.panelDock)
     setProjectUiReady(true)
-  }, [projectUi.canvasTransform, projectUi.leftActivePanel, projectUi.leftSidebarOpen, projectUi.leftSidebarWidth, projectUi.panelDock, projectUi.rightActivePanel, projectUi.rightSidebarOpen, projectUi.rightSidebarWidth, projectUi.showGrid, projectUi.theme, selectedProjectId, tree?.project])
+  }, [projectUi.canvasTransform, projectUi.leftActivePanel, projectUi.leftSidebarOpen, projectUi.leftSidebarWidth, projectUi.panelDock, projectUi.rightActivePanel, projectUi.rightSidebarOpen, projectUi.rightSidebarWidth, projectUi.selectedNodeIds, projectUi.showGrid, projectUi.theme, selectedProjectId, setEffectiveSelection, tree?.nodes, tree?.project])
 
   const handleAuthLost = useCallback(() => {
     setCurrentUser(null)
@@ -672,10 +721,20 @@ function App() {
   }, [selectedNodeId, tree?.nodes])
 
   useEffect(() => {
-    if (identificationTemplateRemovalNodeId && !tree?.nodes.some((node) => node.id === identificationTemplateRemovalNodeId)) {
-      setIdentificationTemplateRemovalNodeId(null)
+    if (!identificationTemplateRemovalNodeIds.length) {
+      return
     }
-  }, [identificationTemplateRemovalNodeId, tree?.nodes])
+    const validIds = identificationTemplateRemovalNodeIds.filter((nodeId) =>
+      (tree?.nodes || []).some((node) => node.id === nodeId),
+    )
+    if (!validIds.length) {
+      setIdentificationTemplateRemoval(null)
+      return
+    }
+    if (validIds.length !== identificationTemplateRemovalNodeIds.length) {
+      setIdentificationTemplateRemoval({ nodeIds: validIds })
+    }
+  }, [identificationTemplateRemovalNodeIds, tree?.nodes])
 
   useEffect(() => {
     if (!identificationTemplates.length) {
@@ -951,6 +1010,7 @@ function App() {
       theme,
       showGrid,
       canvasTransform: transform,
+      selectedNodeIds: effectiveSelectedNodeIds,
       leftSidebarOpen,
       rightSidebarOpen,
       leftSidebarWidth,
@@ -988,6 +1048,7 @@ function App() {
     rightSidebarOpen,
     rightSidebarWidth,
     selectedProjectId,
+    effectiveSelectedNodeIds,
     showGrid,
     theme,
     transform,
@@ -1004,6 +1065,7 @@ function App() {
       theme,
       showGrid,
       canvasTransform: transform,
+      selectedNodeIds: effectiveSelectedNodeIds,
       leftSidebarOpen,
       rightSidebarOpen,
       leftSidebarWidth,
@@ -1044,6 +1106,7 @@ function App() {
     rightSidebarOpen,
     rightSidebarWidth,
     selectedProjectId,
+    effectiveSelectedNodeIds,
     showGrid,
     theme,
     transform,
@@ -1544,6 +1607,25 @@ function App() {
     }
   }
 
+  async function applyIdentificationTemplateToSelection(templateId) {
+    if (!templateId || !explicitSelectedNodes.length) {
+      return
+    }
+
+    setError('')
+    setBusy(true)
+    try {
+      for (const node of explicitSelectedNodes) {
+        await applyIdentificationTemplateRequest(node.id, templateId)
+      }
+      setShowProjectDialog(null)
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function removeIdentificationTemplateRequest(nodeId) {
     const rollbackLocalEvent = beginLocalEventExpectation()
     try {
@@ -1558,15 +1640,27 @@ function App() {
     }
   }
 
+  function requestRemoveIdentificationTemplates(nodeIds) {
+    const targetIds = Array.from(new Set((nodeIds || []).filter(Boolean))).filter(
+      (nodeId) => (tree?.nodes || []).some((node) => node.id === nodeId && node.identification),
+    )
+    if (!targetIds.length) {
+      return
+    }
+    setIdentificationTemplateRemoval({ nodeIds: targetIds })
+  }
+
   async function confirmRemoveIdentificationTemplate() {
-    if (!identificationTemplateRemovalNodeId) {
+    if (!identificationTemplateRemovalNodeIds.length) {
       return
     }
     setError('')
     setBusy(true)
     try {
-      await removeIdentificationTemplateRequest(identificationTemplateRemovalNodeId)
-      setIdentificationTemplateRemovalNodeId(null)
+      for (const nodeId of identificationTemplateRemovalNodeIds) {
+        await removeIdentificationTemplateRequest(nodeId)
+      }
+      setIdentificationTemplateRemoval(null)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -2617,13 +2711,13 @@ function App() {
     }
 
     pendingFocusNodeIdRef.current = nodeId
-    setSelectedNodeId(nodeId)
-  }, [editForm, editTargetNode, saveNodeDraft, setCollapsed, tree?.nodes])
+    setEffectiveSelection([nodeId], nodeId)
+  }, [editForm, editTargetNode, saveNodeDraft, setCollapsed, setEffectiveSelection, tree?.nodes])
 
   const bulkSelectSearchResults = useCallback((nodeIds) => {
     const uniqueIds = Array.from(new Set((nodeIds || []).filter(Boolean)))
     if (!uniqueIds.length) {
-      setMultiSelectedNodeIds([])
+      setEffectiveSelection([], null)
       return
     }
 
@@ -2632,9 +2726,8 @@ function App() {
         ? selectedNodeId
         : uniqueIds[0]
 
-    setSelectedNodeId(nextPrimaryId)
-    setMultiSelectedNodeIds(uniqueIds.filter((nodeId) => nodeId !== nextPrimaryId))
-  }, [selectedNodeId])
+    setEffectiveSelection(uniqueIds, nextPrimaryId)
+  }, [selectedNodeId, setEffectiveSelection])
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -2857,7 +2950,7 @@ function App() {
       return
     }
 
-    const deletableNodes = effectiveSelectedNodes.filter((node) => node.parent_id != null)
+    const deletableNodes = effectiveSelectedActionNodes.filter((node) => node.parent_id != null)
     if (deletableNodes.length === 0) {
       return
     }
@@ -2961,14 +3054,16 @@ function App() {
 
   const {
     beginCameraSelection,
+    beginCanvasPointerDown,
     beginNodeDrag,
-    beginPan,
     beginPreviewPan,
+    canvasMarqueeRect,
     cameraVideoRef,
     cameraViewportRef,
     captureFullCameraFrame,
     focusSelectedNode,
     fitCanvasToView,
+    handleCanvasContextMenu,
     handleCanvasPointerMove,
     previewViewportRef,
     resizeRef,
@@ -2976,6 +3071,7 @@ function App() {
     stopPreviewPan,
     viewportRef,
   } = useWorkspaceInteractions({
+    addToEffectiveSelection,
     cameraVisible,
     dragHoverNodeId,
     layout,
@@ -2983,12 +3079,15 @@ function App() {
     previewVisible,
     previewTransform,
     selectedCameraId,
+    selectedNodeIds: effectiveSelectedNodeIds,
     selectedNode,
+    setContextMenu,
     setCameraDevices,
     setCameraNotice,
     setCameraSelection,
     setDragHoverNodeId,
     setDragPreview,
+    setEffectiveSelection,
     setLeftSidebarWidth,
     setPreviewTransform,
     setRightSidebarWidth,
@@ -3081,6 +3180,7 @@ function App() {
           <InspectorPanel
             busy={busy}
             bulkSelectionCount={bulkSelectionCount}
+            bulkTemplateCount={selectionNodesWithTemplates.length}
             editForm={editForm}
             editTargetNode={editTargetNode}
             error={error}
@@ -3093,11 +3193,12 @@ function App() {
               setError('')
               setShowProjectDialog('apply-template')
             }}
+            openRemoveTemplateDialog={() => requestRemoveIdentificationTemplates(effectiveSelectedNodeIds)}
             saveNodeDraft={saveNodeDraft}
             selectedNode={selectedNode}
             setDeleteNodeOpen={setDeleteNodeOpen}
             setEditForm={setEditForm}
-            setRemoveIdentificationNodeId={setIdentificationTemplateRemovalNodeId}
+            setRemoveIdentificationNodeId={(nodeId) => requestRemoveIdentificationTemplates([nodeId])}
             status={status}
           />
         ),
@@ -3112,6 +3213,7 @@ function App() {
             aiFillRunning={aiFillNodeId === selectedNode?.id}
             busy={busy}
             clearError={() => setError('')}
+            hasBulkSelection={hasBulkSelection}
             identification={selectedNode?.identification || null}
             patchIdentificationField={patchIdentificationFieldRequest}
             runIdentificationAiFill={runIdentificationAiFillRequest}
@@ -3309,8 +3411,9 @@ function App() {
         />
         <CanvasWorkspace
           beginNodeDrag={beginNodeDrag}
-          beginPan={beginPan}
+          beginCanvasPointerDown={beginCanvasPointerDown}
           busy={busy}
+          canvasMarqueeRect={canvasMarqueeRect}
           contextMenu={contextMenu}
           contextMenuNode={contextMenuNode}
           convertNodeToVariant={convertNodeToVariant}
@@ -3325,6 +3428,7 @@ function App() {
           focusSelectedNode={focusSelectedNode}
           fitCanvasToView={fitCanvasToView}
           focusPathMode={focusPathMode}
+          handleCanvasContextMenu={handleCanvasContextMenu}
           handleCanvasPointerMove={handleCanvasPointerMove}
           layout={layout}
           loadedImages={loadedImages}
@@ -3341,10 +3445,9 @@ function App() {
           setContextMenu={setContextMenu}
           setDeleteNodeOpen={setDeleteNodeOpen}
           setDragActive={setDragActive}
-          setMultiSelectedNodeIds={setMultiSelectedNodeIds}
           setPendingUploadMode={setPendingUploadMode}
           setPendingUploadParentId={setPendingUploadParentId}
-          setSelectedNodeId={setSelectedNodeId}
+          setEffectiveSelection={setEffectiveSelection}
           showGrid={showGrid}
           stopPanning={stopPanning}
           toggleGrid={toggleGridPreference}
@@ -3401,10 +3504,12 @@ function App() {
 
       <AppDialogs
         applyIdentificationTemplate={applyIdentificationTemplateRequest}
+        applyIdentificationTemplateToSelection={applyIdentificationTemplateToSelection}
         accountDialog={accountDialog}
         accountForm={accountForm}
         accountStatus={accountStatus}
         bulkSelectionCount={bulkSelectionCount}
+        bulkTemplateCount={selectionNodesWithTemplates.length}
         busy={busy}
         changePassword={changePassword}
         changeUsername={changeUsername}
@@ -3430,7 +3535,8 @@ function App() {
         importProject={importProject}
         importProjectName={importProjectName}
         projectApiKeyInput={projectApiKeyInput}
-        identificationTemplateRemovalNode={identificationTemplateRemovalNode}
+        identificationTemplateRemovalCount={identificationTemplateRemovalCount}
+        identificationTemplateRemovalNodes={identificationTemplateRemovalNodes}
         mobileConnectionCount={mobileConnectionCount}
         newFolderDialog={newFolderDialog}
         newFolderName={newFolderName}
@@ -3446,7 +3552,13 @@ function App() {
         setDeleteNodeOpen={setDeleteNodeOpen}
         setDeleteProjectText={setDeleteProjectText}
         setExportFileName={setExportFileName}
-        setIdentificationTemplateRemovalNodeId={setIdentificationTemplateRemovalNodeId}
+        setIdentificationTemplateRemovalNodeId={(nodeId) => {
+          if (!nodeId) {
+            setIdentificationTemplateRemoval(null)
+            return
+          }
+          requestRemoveIdentificationTemplates([nodeId])
+        }}
         setImportProjectName={setImportProjectName}
         setNewFolderDialog={setNewFolderDialog}
         setNewFolderName={setNewFolderName}

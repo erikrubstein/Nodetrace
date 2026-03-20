@@ -3,8 +3,9 @@ import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, FitViewIcon, FocusNodeIcon
 
 export default function CanvasWorkspace({
   beginNodeDrag,
-  beginPan,
+  beginCanvasPointerDown,
   busy,
+  canvasMarqueeRect,
   contextMenu,
   contextMenuNode,
   convertNodeToVariant,
@@ -19,6 +20,7 @@ export default function CanvasWorkspace({
   focusSelectedNode,
   fitCanvasToView,
   focusPathMode,
+  handleCanvasContextMenu,
   handleCanvasPointerMove,
   layout,
   loadedImages,
@@ -35,10 +37,9 @@ export default function CanvasWorkspace({
   setContextMenu,
   setDeleteNodeOpen,
   setDragActive,
-  setMultiSelectedNodeIds,
   setPendingUploadMode,
   setPendingUploadParentId,
-  setSelectedNodeId,
+  setEffectiveSelection,
   showGrid,
   stopPanning,
   toggleGrid,
@@ -58,12 +59,7 @@ export default function CanvasWorkspace({
     <section
       ref={viewportRef}
       className={`canvas-viewport ${dragActive ? 'drag-active' : ''} ${showGrid ? '' : 'canvas-viewport--no-grid'}`.trim()}
-      onContextMenu={(event) => {
-        if (!event.target.closest('.graph-node')) {
-          event.preventDefault()
-          setContextMenu(null)
-        }
-      }}
+      onContextMenu={handleCanvasContextMenu}
       onDragEnter={(event) => {
         event.preventDefault()
         if (event.dataTransfer.types.includes('Files')) {
@@ -86,7 +82,7 @@ export default function CanvasWorkspace({
         setDragActive(false)
         await uploadFiles(Array.from(event.dataTransfer.files || []))
       }}
-      onPointerDown={beginPan}
+      onPointerDown={beginCanvasPointerDown}
       onPointerMove={handleCanvasPointerMove}
       onPointerUp={stopPanning}
       onPointerCancel={stopPanning}
@@ -229,8 +225,7 @@ export default function CanvasWorkspace({
                 return
               }
               void saveNodeDraft(editTargetNode, editForm)
-              setMultiSelectedNodeIds([])
-              setSelectedNodeId(item.id)
+              setEffectiveSelection([item.id], item.id)
             }}
             onPointerDown={(event) => {
               event.preventDefault()
@@ -316,6 +311,17 @@ export default function CanvasWorkspace({
       </div>
 
       {dragActive ? <div className="drop-overlay">Drop photos onto the selected node</div> : null}
+      {canvasMarqueeRect ? (
+        <div
+          className="canvas-marquee"
+          style={{
+            left: `${canvasMarqueeRect.x}px`,
+            top: `${canvasMarqueeRect.y}px`,
+            width: `${canvasMarqueeRect.width}px`,
+            height: `${canvasMarqueeRect.height}px`,
+          }}
+        />
+      ) : null}
       {dragPreview ? (
         <div className="drag-preview" style={{ left: `${dragPreview.x}px`, top: `${dragPreview.y}px` }}>
           {tree?.nodes.find((node) => node.id === dragPreview.nodeId)?.name || 'Moving'}
@@ -463,7 +469,7 @@ export default function CanvasWorkspace({
             }}
             onClick={() => {
               setContextMenu(null)
-              setSelectedNodeId(contextMenu.nodeId)
+              setEffectiveSelection([contextMenu.nodeId], contextMenu.nodeId)
               setDeleteNodeOpen(true)
             }}
             type="button"

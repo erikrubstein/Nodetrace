@@ -1,9 +1,11 @@
 export default function AppDialogs({
   applyIdentificationTemplate,
+  applyIdentificationTemplateToSelection,
   accountDialog,
   accountForm,
   accountStatus,
   busy,
+  bulkTemplateCount,
   changePassword,
   changeUsername,
   createProject,
@@ -28,7 +30,8 @@ export default function AppDialogs({
   importProject,
   importProjectName,
   projectApiKeyInput,
-  identificationTemplateRemovalNode,
+  identificationTemplateRemovalCount,
+  identificationTemplateRemovalNodes,
   mobileConnectionCount,
   newFolderDialog,
   newFolderName,
@@ -531,7 +534,7 @@ export default function AppDialogs({
         </div>
       ) : null}
 
-      {identificationTemplateRemovalNode ? (
+      {identificationTemplateRemovalCount ? (
         <div
           className="dialog-backdrop"
           onClick={() => !busy && setIdentificationTemplateRemovalNodeId(null)}
@@ -545,7 +548,17 @@ export default function AppDialogs({
           >
             <div className="dialog__title">Remove Template</div>
             <div className="inspector__notice">
-              Remove the template from <strong>{identificationTemplateRemovalNode.name}</strong>? This will remove all the data you entered.
+              {identificationTemplateRemovalCount > 1 ? (
+                <>
+                  Remove templates from <strong>{identificationTemplateRemovalCount} selected nodes</strong>? This will
+                  remove all saved field data on those nodes.
+                </>
+              ) : (
+                <>
+                  Remove the template from <strong>{identificationTemplateRemovalNodes?.[0]?.name || 'this node'}</strong>?
+                  This will remove all the data you entered.
+                </>
+              )}
             </div>
             <div className="dialog__actions">
               <button
@@ -573,18 +586,32 @@ export default function AppDialogs({
         <div className="dialog-backdrop" onClick={() => !busy && setShowProjectDialog(null)} role="presentation">
           <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
             <div className="dialog__title">Apply Template</div>
+            {hasBulkSelection ? (
+              <div className="inspector__notice">
+                Apply a template to <strong>{bulkSelectionCount} selected nodes</strong>.
+                {bulkTemplateCount ? ` ${bulkTemplateCount} currently have template data that may be replaced.` : ''}
+              </div>
+            ) : selectedNode?.identification ? (
+              <div className="inspector__notice">
+                Applying a different template here may replace the current template data on <strong>{selectedNode.name}</strong>.
+              </div>
+            ) : null}
             <div className="project-list">
               {identificationTemplates.map((template) => (
                 <button
                   key={template.id}
                   className="project-row"
-                  disabled={busy || !selectedNode}
+                  disabled={busy || (!selectedNode && !hasBulkSelection)}
                   onClick={async () => {
-                    if (!selectedNode) {
+                    if (!selectedNode && !hasBulkSelection) {
                       return
                     }
                     try {
-                      await applyIdentificationTemplate(selectedNode.id, template.id)
+                      if (hasBulkSelection) {
+                        await applyIdentificationTemplateToSelection(template.id)
+                      } else {
+                        await applyIdentificationTemplate(selectedNode.id, template.id)
+                      }
                       setShowProjectDialog(null)
                     } catch {
                       // Parent handles global error state.

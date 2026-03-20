@@ -11,6 +11,7 @@ export default function FieldsPanel({
   aiFillRunning,
   busy,
   clearError,
+  hasBulkSelection,
   identification,
   patchIdentificationField,
   runIdentificationAiFill,
@@ -106,6 +107,16 @@ export default function FieldsPanel({
       <div className="fields-panel">
         <div className="inspector__section">
           <div className="inspector__empty">Select a node.</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (hasBulkSelection) {
+    return (
+      <div className="fields-panel">
+        <div className="inspector__section">
+          <div className="inspector__empty">Select a single node to edit structured data.</div>
         </div>
       </div>
     )
