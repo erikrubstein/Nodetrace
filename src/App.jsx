@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import AccountPanel from './components/AccountPanel'
 import AppDialogs from './components/AppDialogs'
@@ -127,6 +127,7 @@ function App() {
   const pendingUiSignatureRef = useRef(null)
   const uiRequestSequenceRef = useRef(0)
   const sidebarUiSignatureRef = useRef('')
+  const selectedLayoutAnchorRef = useRef({ nodeId: null, x: null, y: null })
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
 
   useEffect(() => {
@@ -450,6 +451,37 @@ function App() {
     () => compactNodePath(buildNodePath(tree?.nodes, selectedNodeId)),
     [selectedNodeId, tree?.nodes],
   )
+
+  useLayoutEffect(() => {
+    const currentLayoutNode = selectedNodeId ? layout.nodes.find((item) => item.id === selectedNodeId) : null
+    const previousAnchor = selectedLayoutAnchorRef.current
+
+    if (!currentLayoutNode) {
+      selectedLayoutAnchorRef.current = { nodeId: selectedNodeId, x: null, y: null }
+      return
+    }
+
+    const shouldAnchorSelectedNode =
+      previousAnchor.nodeId === selectedNodeId &&
+      previousAnchor.x != null &&
+      previousAnchor.y != null &&
+      !pendingInitialCanvasFitRef.current &&
+      (previousAnchor.x !== currentLayoutNode.x || previousAnchor.y !== currentLayoutNode.y)
+
+    if (shouldAnchorSelectedNode) {
+      setCanvasTransform((current) => ({
+        ...current,
+        x: current.x + (previousAnchor.x - currentLayoutNode.x) * current.scale,
+        y: current.y + (previousAnchor.y - currentLayoutNode.y) * current.scale,
+      }))
+    }
+
+    selectedLayoutAnchorRef.current = {
+      nodeId: selectedNodeId,
+      x: currentLayoutNode.x,
+      y: currentLayoutNode.y,
+    }
+  }, [layout.nodes, selectedNodeId, setCanvasTransform])
 
   useEffect(() => {
     setProjectUiReady(false)
