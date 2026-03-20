@@ -47,6 +47,31 @@ import {
   WrenchIcon,
 } from './components/icons'
 
+const PRESENCE_COLORS = ['#6f9cff', '#5fc9a8', '#d48cff', '#f0a35b', '#58c5d8', '#d86f9f', '#a6c95b', '#c27cff']
+
+function getPresenceColor(id) {
+  const value = String(id || '')
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0
+  }
+  return PRESENCE_COLORS[hash % PRESENCE_COLORS.length]
+}
+
+function getPresenceInitials(username) {
+  const parts = String(username || '')
+    .trim()
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+  if (!parts.length) {
+    return '?'
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase()
+  }
+  return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase()
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
@@ -98,6 +123,7 @@ function App() {
   const [cameraNotice, setCameraNotice] = useState('')
   const [cameraSelection, setCameraSelection] = useState(null)
   const [loadedImages, setLoadedImages] = useState({})
+  const [projectPresenceUsers, setProjectPresenceUsers] = useState([])
   const [draggingPanelId, setDraggingPanelId] = useState(null)
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false)
   const [mobileConnectionCount, setMobileConnectionCount] = useState(0)
@@ -131,6 +157,7 @@ function App() {
   const sidebarUiSignatureRef = useRef('')
   const selectedLayoutAnchorRef = useRef({ nodeId: null, x: null, y: null })
   const pendingFocusNodeIdRef = useRef(null)
+  const presenceRequestSequenceRef = useRef(0)
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
 
   useEffect(() => {
@@ -418,6 +445,27 @@ function App() {
   const identificationTemplateRemovalNode =
     tree?.nodes.find((node) => node.id === identificationTemplateRemovalNodeId) || null
   const identificationTemplates = useMemo(() => tree?.project?.identificationTemplates || [], [tree?.project?.identificationTemplates])
+  const remotePresenceUsers = useMemo(
+    () =>
+      (projectPresenceUsers || []).map((user) => ({
+        ...user,
+        color: getPresenceColor(user.userId || user.username),
+        initials: getPresenceInitials(user.username),
+      })),
+    [projectPresenceUsers],
+  )
+  const remoteSelectionsByNodeId = useMemo(() => {
+    const nextMap = new Map()
+    for (const user of remotePresenceUsers) {
+      if (!user.selectedNodeId) {
+        continue
+      }
+      const items = nextMap.get(user.selectedNodeId) || []
+      items.push(user)
+      nextMap.set(user.selectedNodeId, items)
+    }
+    return nextMap
+  }, [remotePresenceUsers])
   const selectedTemplateEditor =
     identificationTemplates.find((template) => template.id === selectedTemplateEditorId) || null
   const hasTemplateChanges = useMemo(() => {
@@ -685,6 +733,55 @@ function App() {
       setSessionDialogOpen(false)
     }
   }, [mobileConnectionCount])
+
+  useEffect(() => {
+    if (!currentUser || !selectedProjectId) {
+      presenceRequestSequenceRef.current += 1
+      setProjectPresenceUsers([])
+      return undefined
+    }
+
+    let cancelled = false
+
+    async function refreshPresence() {
+      const requestSequence = ++presenceRequestSequenceRef.current
+      try {
+        const payload = await api(`/api/projects/${selectedProjectId}/presence`)
+        if (cancelled || requestSequence !== presenceRequestSequenceRef.current) {
+          return
+        }
+        setProjectPresenceUsers(payload.users || [])
+      } catch (presenceError) {
+        if (presenceError instanceof ApiError && presenceError.status === 401) {
+          handleAuthLost()
+          return
+        }
+        if (!cancelled) {
+          setProjectPresenceUsers([])
+        }
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        void refreshPresence()
+      }
+    }
+
+    void refreshPresence()
+    const intervalHandle = window.setInterval(() => {
+      void refreshPresence()
+    }, 2500)
+    window.addEventListener('focus', handleVisibilityChange)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalHandle)
+      window.removeEventListener('focus', handleVisibilityChange)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [currentUser, handleAuthLost, selectedProjectId])
 
   useEffect(() => {
     if (resolvedLeftActivePanel !== leftActivePanel) {
@@ -3085,11 +3182,13 @@ function App() {
         leftActivePanel={resolvedLeftActivePanel}
         leftSidebarOpen={effectiveLeftSidebarOpen}
         mobileConnectionCount={mobileConnectionCount}
+        onPresenceSelect={selectNodeAndFocus}
         openMenu={openMenu}
         panelDock={panelDock}
         panelTitles={Object.fromEntries(panelIds.map((panelId) => [panelId, panelDefinitions[panelId]?.title || panelId]))}
         pendingUploadMode={pendingUploadMode}
         pendingUploadParentId={pendingUploadParentId}
+        presenceUsers={remotePresenceUsers}
         projectName={tree?.project?.name}
         projects={projects}
         redo={redo}
@@ -3177,6 +3276,7 @@ function App() {
           multiSelectedNodeIds={multiSelectedNodeIds}
           openNewFolderDialog={openNewFolderDialog}
           projectSettings={projectSettings}
+          remoteSelectionsByNodeId={remoteSelectionsByNodeId}
           selectedNodePath={selectedNodePath}
           saveNodeDraft={saveNodeDraft}
           selectedNode={selectedNode}

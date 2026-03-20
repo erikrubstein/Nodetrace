@@ -25,6 +25,7 @@ export default function CanvasWorkspace({
   multiSelectedNodeIds,
   openNewFolderDialog,
   projectSettings,
+  remoteSelectionsByNodeId,
   selectedNodePath,
   saveNodeDraft,
   selectedNode,
@@ -178,7 +179,15 @@ export default function CanvasWorkspace({
           ))}
         </svg>
 
-        {layout.nodes.map((item) => (
+        {layout.nodes.map((item) => {
+          const remoteSelections = remoteSelectionsByNodeId?.get(item.id) || []
+          const visualSize = item.node.isVariant ? 78 : 112
+          const visualOffsetX = item.node.isVariant ? 17 : 0
+          const visualOffsetY = item.node.isVariant ? 17 : 0
+          const visualRadius = item.node.isVariant ? 5 : 6
+          const remoteRingBaseOffset =
+            selectedNodeId === item.id || multiSelectedNodeIds.includes(item.id) ? 7 : 4
+          return (
           <button
             key={item.id}
             data-node-id={item.id}
@@ -233,6 +242,24 @@ export default function CanvasWorkspace({
             style={{ left: `${item.x}px`, top: `${item.y}px` }}
             type="button"
           >
+            {remoteSelections.map((user, index) => {
+              const ringOffset = remoteRingBaseOffset + index * 6
+              return (
+                <span
+                  key={user.userId}
+                  aria-hidden="true"
+                  className="graph-node__presence-ring"
+                  style={{
+                    '--presence-color': user.color,
+                    left: `${visualOffsetX - ringOffset}px`,
+                    top: `${visualOffsetY - ringOffset}px`,
+                    width: `${visualSize + ringOffset * 2}px`,
+                    height: `${visualSize + ringOffset * 2}px`,
+                    borderRadius: `${visualRadius + ringOffset}px`,
+                  }}
+                />
+              )
+            })}
             <div className="graph-node__visual">
               {item.node.hiddenSiblingCount ? (
                 <div className="graph-node__sibling-indicator">+{item.node.hiddenSiblingCount}</div>
@@ -283,7 +310,8 @@ export default function CanvasWorkspace({
               <span>{item.node.name}</span>
             </div>
           </button>
-        ))}
+          )
+        })}
       </div>
 
       {dragActive ? <div className="drop-overlay">Drop photos onto the selected node</div> : null}

@@ -3285,6 +3285,29 @@ function listProjectSessions(projectId) {
   return Array.from(activeDesktopSessions.values()).filter((session) => session.projectId === projectId)
 }
 
+function listProjectPresence(projectId, currentUserId = null) {
+  const latestByUserId = new Map()
+  for (const session of listProjectSessions(projectId)) {
+    if (!session.userId || session.userId === currentUserId) {
+      continue
+    }
+    const current = latestByUserId.get(session.userId)
+    if (!current || current.updatedAt < session.updatedAt) {
+      latestByUserId.set(session.userId, session)
+    }
+  }
+
+  return Array.from(latestByUserId.values())
+    .sort((a, b) => a.username.localeCompare(b.username))
+    .map((session) => ({
+      userId: session.userId,
+      username: session.username,
+      selectedNodeId: session.selectedNodeId || null,
+      selectedNodeName: session.selectedNodeName || null,
+      updatedAt: session.updatedAt,
+    }))
+}
+
 function cleanupMobileConnections() {
   const cutoff = Date.now() - MOBILE_CONNECTION_TTL_MS
   for (const [sessionId, connections] of activeMobileConnections) {
@@ -3781,6 +3804,17 @@ app.get('/api/projects/:id/events', requireAuth, (req, res, next) => {
       if (listeners.size === 0) {
         projectEventClients.delete(projectId)
       }
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/projects/:id/presence', requireAuth, (req, res, next) => {
+  try {
+    const project = assertProjectAccess(req.params.id, req.user.id)
+    res.json({
+      users: listProjectPresence(project.id, req.user.id),
     })
   } catch (error) {
     next(error)

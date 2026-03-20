@@ -232,6 +232,49 @@ select {
   margin-right: -4px;
 }
 
+.topbar__presence-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.topbar__presence-item .icon-tooltip {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.topbar__presence-item:hover .icon-tooltip {
+  transform: translateX(-50%) translateY(0);
+}
+
+.topbar__presence-chip {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: inset 0 0 0 2px var(--presence-color);
+  font-size: 0.68rem;
+  line-height: 1;
+  text-transform: uppercase;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+}
+
+.topbar__presence-chip:hover:not(:disabled) {
+  background: var(--menu-active);
+}
+
+.topbar__presence-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .topbar__logo {
   width: 20px;
   height: 20px;
@@ -584,6 +627,14 @@ select {
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--inner-stroke);
   position: relative;
+  z-index: 1;
+}
+
+.graph-node__presence-ring {
+  position: absolute;
+  box-shadow: 0 0 0 3px var(--presence-color);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .graph-node__sibling-indicator {

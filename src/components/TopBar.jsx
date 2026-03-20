@@ -18,6 +18,8 @@ export default function TopBar({
   openMenu,
   pendingUploadMode,
   pendingUploadParentId,
+  onPresenceSelect,
+  presenceUsers,
   projectName,
   projects,
   redo,
@@ -306,6 +308,31 @@ export default function TopBar({
       </div>
 
       <div className="topbar__right">
+        {presenceUsers?.length ? (
+          <div className="topbar__presence-list">
+            {presenceUsers.map((user) => (
+              <span className="icon-button-wrap topbar__presence-item" key={user.userId}>
+                <button
+                  aria-label={user.selectedNodeName ? `${user.username}: ${user.selectedNodeName}` : user.username}
+                  className="topbar__presence-chip"
+                  disabled={!user.selectedNodeId}
+                  onClick={() => {
+                    if (user.selectedNodeId) {
+                      void onPresenceSelect?.(user.selectedNodeId)
+                    }
+                  }}
+                  style={{ '--presence-color': user.color }}
+                  type="button"
+                >
+                  {user.initials}
+                </button>
+                <span aria-hidden="true" className="icon-tooltip">
+                  {user.selectedNodeName ? `${user.username}: ${user.selectedNodeName}` : user.username}
+                </span>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <IconButton
           aria-label="Show mobile capture session"
           className={mobileConnectionCount > 0 ? 'icon-button--connected' : ''}
