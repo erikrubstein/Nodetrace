@@ -47,6 +47,7 @@ export default function PreviewPanel({
   const saveSequenceRef = useRef(0)
   const syncedNodeIdRef = useRef(null)
   const syncedEditSignatureRef = useRef(JSON.stringify(defaultImageEdits))
+  const viewportSizeRef = useRef({ width: 0, height: 0 })
   const [sourceMimeType, setSourceMimeType] = useState('image/jpeg')
   const [localEdits, setLocalEdits] = useState(defaultImageEdits)
   const [cropMode, setCropMode] = useState(false)
@@ -247,6 +248,48 @@ export default function PreviewPanel({
       fitPreviewView()
     }
   }, [fitPreviewView, imageReady, localEdits, selectedNode?.id])
+
+  useLayoutEffect(() => {
+    const viewport = previewViewportRef.current
+    if (!viewport) {
+      return undefined
+    }
+
+    const syncViewportSize = (width, height) => {
+      const previous = viewportSizeRef.current
+      if (!previous.width || !previous.height) {
+        viewportSizeRef.current = { width, height }
+        return
+      }
+
+      if (previous.width === width && previous.height === height) {
+        return
+      }
+
+      const deltaX = (width - previous.width) / 2
+      const deltaY = (height - previous.height) / 2
+      viewportSizeRef.current = { width, height }
+
+      setPreviewTransform((current) => ({
+        ...current,
+        x: current.x + deltaX,
+        y: current.y + deltaY,
+      }))
+    }
+
+    syncViewportSize(viewport.clientWidth, viewport.clientHeight)
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) {
+        return
+      }
+      syncViewportSize(entry.contentRect.width, entry.contentRect.height)
+    })
+
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [previewViewportRef, setPreviewTransform])
 
   function resetCrop() {
     setLocalEdits((current) => ({
