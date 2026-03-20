@@ -92,9 +92,10 @@ const defaultUserProjectUi = {
   panelDock: {
     preview: 'left',
     camera: 'left',
+    search: 'left',
+    templates: 'left',
     inspector: 'right',
     fields: 'right',
-    templates: 'right',
     settings: 'right',
     account: 'right',
   },

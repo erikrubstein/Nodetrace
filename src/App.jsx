@@ -9,6 +9,7 @@ import DockedSidebar from './components/DockedSidebar'
 import FieldsPanel from './components/FieldsPanel'
 import InspectorPanel from './components/InspectorPanel'
 import PreviewPanel from './components/PreviewPanel'
+import SearchPanel from './components/SearchPanel'
 import SidebarRail from './components/SidebarRail'
 import SettingsPanel from './components/SettingsPanel'
 import TemplatesPanel from './components/TemplatesPanel'
@@ -40,6 +41,7 @@ import {
   GridIcon,
   IdentificationIcon,
   PreviewIcon,
+  SearchIcon,
   TemplatesIcon,
   UserIcon,
   WrenchIcon,
@@ -128,6 +130,7 @@ function App() {
   const uiRequestSequenceRef = useRef(0)
   const sidebarUiSignatureRef = useRef('')
   const selectedLayoutAnchorRef = useRef({ nodeId: null, x: null, y: null })
+  const pendingFocusNodeIdRef = useRef(null)
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
 
   useEffect(() => {
@@ -2490,6 +2493,36 @@ function App() {
     }
   }, [applyCollapsedState, beginLocalEventExpectation, pushHistory, selectedNodeId, setCollapsedRequest, tree?.nodes, tree?.root])
 
+  const selectNodeAndFocus = useCallback(async (nodeId) => {
+    if (!nodeId || !tree?.nodes?.length) {
+      return
+    }
+
+    void saveNodeDraft(editTargetNode, editForm)
+    setMultiSelectedNodeIds([])
+
+    const nodeMap = new Map(tree.nodes.map((node) => [node.id, node]))
+    const ancestorsToExpand = []
+    let current = nodeMap.get(nodeId)
+    while (current?.parent_id) {
+      const parent = nodeMap.get(current.parent_id)
+      if (!parent) {
+        break
+      }
+      if (!parent.isVariant && parent.collapsed) {
+        ancestorsToExpand.unshift(parent.id)
+      }
+      current = parent
+    }
+
+    for (const ancestorId of ancestorsToExpand) {
+      await setCollapsed(ancestorId, false)
+    }
+
+    pendingFocusNodeIdRef.current = nodeId
+    setSelectedNodeId(nodeId)
+  }, [editForm, editTargetNode, saveNodeDraft, setCollapsed, tree?.nodes])
+
   useEffect(() => {
     function handleKeyDown(event) {
       const target = event.target
@@ -2808,6 +2841,17 @@ function App() {
     fitCanvasToView()
   }, [fitCanvasToView, layout.height, layout.width, projectUiReady, tree?.project])
 
+  useLayoutEffect(() => {
+    if (!pendingFocusNodeIdRef.current || pendingFocusNodeIdRef.current !== selectedNodeId) {
+      return
+    }
+    if (!layout.nodes.some((item) => item.id === selectedNodeId)) {
+      return
+    }
+    pendingFocusNodeIdRef.current = null
+    focusSelectedNode()
+  }, [focusSelectedNode, layout.nodes, selectedNodeId])
+
   const panelDefinitions = {
       preview: {
         id: 'preview',
@@ -2844,6 +2888,19 @@ function App() {
             selectedCameraId={selectedCameraId}
             selectedNode={selectedNode}
             setSelectedCameraId={setSelectedCameraId}
+          />
+        ),
+      },
+      search: {
+        id: 'search',
+        title: 'Search',
+        icon: <SearchIcon />,
+        content: (
+          <SearchPanel
+            onSelectNode={selectNodeAndFocus}
+            selectedNodeId={selectedNodeId}
+            templates={identificationTemplates}
+            tree={tree}
           />
         ),
       },

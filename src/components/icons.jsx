@@ -65,3 +65,7 @@ export function TemplatesIcon() {
 export function GridIcon() {
   return <i aria-hidden="true" className="fa-solid fa-border-all" />
 }
+
+export function SearchIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-magnifying-glass" />
+}
