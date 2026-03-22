@@ -100,6 +100,8 @@ The Search panel supports:
 - filter by one or more owners
 - filter by one or more templates
 - batch-select all results
+- isolate search results on the canvas
+- show completed nodes with a visual checkmark in the results list
 - click a result to select it and focus it on the canvas
 
 ### Structured Identification
@@ -288,6 +290,19 @@ NODETRACE_SECRET_KEY=replace-this-with-a-long-random-secret
 ```
 
 That key is used only to encrypt stored project API keys on the server.
+
+## Contributor Notes
+
+For implementation details and contribution guidance, see:
+
+- [architecture.md](./architecture.md)
+
+That document explains:
+
+- how the app is structured
+- how client and server responsibilities are split
+- where new feature logic should live
+- the patterns already used for panels, hooks, persistence, and async state
 
 ## Intended Use
 
