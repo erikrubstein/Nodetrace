@@ -34,13 +34,11 @@ function optionRow({ checked, itemKey, label, onClick, type = 'single' }) {
 
 export default function SearchPanel({
   bulkSelectNodeIds,
-  hideNonResults,
   onResultsChange,
   selectedNodeId,
   templates,
   tree,
   onSelectNode,
-  toggleHideNonResults,
 }) {
   const filterPopoverRef = useRef(null)
   const [query, setQuery] = useState('')
@@ -281,15 +279,6 @@ export default function SearchPanel({
         <div className="inspector__section-header">
           <div className="inspector__title">{results.length} RESULTS</div>
           <div className="search-panel__results-actions">
-            <IconButton
-              aria-label="Hide non-results"
-              className={`tool-button ${hideNonResults ? 'is-active' : ''}`}
-              disabled={!results.length && !hideNonResults}
-              onClick={toggleHideNonResults}
-              tooltip={hideNonResults ? 'Show All Nodes' : 'Show Results Only'}
-            >
-              <i aria-hidden="true" className="fa-solid fa-eye-slash" />
-            </IconButton>
             <IconButton
               aria-label="Select all results"
               className="tool-button"

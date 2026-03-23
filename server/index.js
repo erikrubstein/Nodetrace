@@ -98,6 +98,7 @@ const defaultUserProjectUi = {
     inspector: 'right',
     fields: 'right',
     settings: 'right',
+    collaborators: 'right',
     account: 'right',
   },
 }

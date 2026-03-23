@@ -1,5 +1,5 @@
 import IconButton from './IconButton'
-import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, FitViewIcon, FocusNodeIcon, FolderIcon, GridIcon, RootNodeIcon } from './icons'
+import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, EyeLowVisionIcon, FitViewIcon, FocusNodeIcon, FolderIcon, GridIcon, RootNodeIcon } from './icons'
 
 export default function CanvasWorkspace({
   beginNodeDrag,
@@ -45,6 +45,7 @@ export default function CanvasWorkspace({
   setEffectiveSelection,
   showGrid,
   stopPanning,
+  toggleHideNonResults,
   toggleGrid,
   toggleMultiSelection,
   transform,
@@ -163,6 +164,15 @@ export default function CanvasWorkspace({
           tooltip={showGrid ? 'Hide Grid' : 'Show Grid'}
         >
           <GridIcon />
+        </IconButton>
+        <IconButton
+          aria-label={hideNonResultNodes ? 'Show all nodes' : 'Show search results only'}
+          className={`canvas-tool-button ${hideNonResultNodes ? 'is-active' : ''}`}
+          disabled={!searchResultNodeIds?.length && !hideNonResultNodes}
+          onClick={toggleHideNonResults}
+          tooltip={hideNonResultNodes ? 'Show All Nodes' : 'Show Results Only'}
+        >
+          <EyeLowVisionIcon />
         </IconButton>
       </div>
       <div

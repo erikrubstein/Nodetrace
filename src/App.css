@@ -529,6 +529,12 @@ select {
   color: var(--text);
 }
 
+.canvas-tool-button.is-active,
+.canvas-tool-button.is-active:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
 .canvas-viewport.drag-active {
   background-color: var(--drop);
 }

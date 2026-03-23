@@ -5,7 +5,7 @@ export const SIDEBAR_RAIL_WIDTH = 38
 export const VARIANT_VISUAL_SIZE = 78
 export const VARIANT_VISUAL_OFFSET = Math.round((NODE_WIDTH - VARIANT_VISUAL_SIZE) / 2)
 
-export const panelIds = ['preview', 'camera', 'search', 'templates', 'inspector', 'fields', 'settings', 'account']
+export const panelIds = ['preview', 'camera', 'search', 'templates', 'inspector', 'fields', 'settings', 'collaborators', 'account']
 export const defaultPanelDock = {
   preview: 'left',
   camera: 'left',
@@ -14,6 +14,7 @@ export const defaultPanelDock = {
   inspector: 'right',
   fields: 'right',
   settings: 'right',
+  collaborators: 'right',
   account: 'right',
 }
 

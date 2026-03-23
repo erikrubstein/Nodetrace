@@ -58,6 +58,10 @@ export function UserIcon() {
   return <i aria-hidden="true" className="fa-solid fa-user" />
 }
 
+export function UsersIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-users" />
+}
+
 export function IdentificationIcon() {
   return <i aria-hidden="true" className="fa-solid fa-list-check" />
 }
@@ -72,4 +76,12 @@ export function GridIcon() {
 
 export function SearchIcon() {
   return <i aria-hidden="true" className="fa-solid fa-magnifying-glass" />
+}
+
+export function PencilIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-pencil" />
+}
+
+export function EyeLowVisionIcon() {
+  return <i aria-hidden="true" className="fa-solid fa-eye-low-vision" />
 }

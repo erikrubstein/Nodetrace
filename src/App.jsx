@@ -5,6 +5,7 @@ import AppDialogs from './components/AppDialogs'
 import AuthScreen from './components/AuthScreen'
 import CameraPanel from './components/CameraPanel'
 import CanvasWorkspace from './components/CanvasWorkspace'
+import CollaboratorsPanel from './components/CollaboratorsPanel'
 import DockedSidebar from './components/DockedSidebar'
 import FieldsPanel from './components/FieldsPanel'
 import InspectorPanel from './components/InspectorPanel'
@@ -38,12 +39,13 @@ import { debugEnabled, debugLog } from './lib/debug'
 import {
   CameraIcon,
   GearIcon,
-  GridIcon,
   IdentificationIcon,
+  PencilIcon,
   PreviewIcon,
   SearchIcon,
   TemplatesIcon,
   UserIcon,
+  UsersIcon,
   WrenchIcon,
 } from './components/icons'
 
@@ -3177,13 +3179,11 @@ function App() {
         content: (
           <SearchPanel
             bulkSelectNodeIds={bulkSelectSearchResults}
-            hideNonResults={hideNonResultNodes}
             onResultsChange={setSearchResultNodeIds}
             onSelectNode={selectNodeAndFocus}
             selectedNodeId={selectedNodeId}
             templates={identificationTemplates}
             tree={tree}
-            toggleHideNonResults={() => setHideNonResultNodes((current) => !current)}
           />
         ),
       },
@@ -3221,7 +3221,7 @@ function App() {
       fields: {
         id: 'fields',
         title: 'Data',
-        icon: <TemplatesIcon />,
+        icon: <PencilIcon />,
         content: (
           <FieldsPanel
             key={`${selectedNode?.id || 'none'}:${selectedNode?.identification?.templateId || 'none'}`}
@@ -3264,15 +3264,8 @@ function App() {
         icon: <GearIcon />,
         content: (
           <SettingsPanel
-            collaboratorUsername={collaboratorUsername}
-            addCollaborator={addCollaborator}
             busy={busy}
-            canManageUsers={Boolean(tree?.project?.canManageUsers)}
             canManageProjectSecrets={Boolean(tree?.project?.canManageUsers)}
-            clearError={() => setError('')}
-            collaborators={tree?.project?.collaborators || []}
-            currentUsername={currentUser?.username || ''}
-            error={error}
             hasProjectOpenAiKey={Boolean(tree?.project?.openAiApiKeyConfigured)}
             openAiApiKeyMask={tree?.project?.openAiApiKeyMask || ''}
             openOpenAiKeyDialog={() => {
@@ -3280,7 +3273,6 @@ function App() {
               setProjectApiKeyInput('')
               setShowProjectDialog('openai-key')
             }}
-            ownerUsername={tree?.project?.ownerUsername || ''}
             openRenameProjectDialog={() => {
               setError('')
               setProjectName(tree?.project?.name || '')
@@ -3296,6 +3288,24 @@ function App() {
             projectSettings={projectSettings}
             resetProjectSettings={resetProjectSettings}
             clearProjectOpenAiKey={clearProjectOpenAiKey}
+          />
+        ),
+      },
+      collaborators: {
+        id: 'collaborators',
+        title: 'Collaborators',
+        icon: <UsersIcon />,
+        content: (
+          <CollaboratorsPanel
+            collaboratorUsername={collaboratorUsername}
+            addCollaborator={addCollaborator}
+            busy={busy}
+            canManageUsers={Boolean(tree?.project?.canManageUsers)}
+            clearError={() => setError('')}
+            collaborators={tree?.project?.collaborators || []}
+            currentUsername={currentUser?.username || ''}
+            error={error}
+            ownerUsername={tree?.project?.ownerUsername || ''}
             removeCollaborator={removeCollaborator}
             setCollaboratorUsername={setCollaboratorUsername}
           />
@@ -3473,6 +3483,7 @@ function App() {
           setEffectiveSelection={setEffectiveSelection}
           showGrid={showGrid}
           stopPanning={stopPanning}
+          toggleHideNonResults={() => setHideNonResultNodes((current) => !current)}
           toggleGrid={toggleGridPreference}
           toggleMultiSelection={toggleMultiSelection}
           transform={transform}
