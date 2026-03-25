@@ -25,6 +25,8 @@ export function importRestorePayloadRoutes(app, ctx) {
     createUntitledName,
     resolveVariantAnchor,
     serializeNodeForUser,
+    upsertNodeIdentification,
+    assertIdentificationTemplateAccess,
   } = ctx
 
   app.get('/api/projects/:id/export', requireAuth, (req, res, next) => {
@@ -249,10 +251,22 @@ export function importRestorePayloadRoutes(app, ctx) {
 
       const originalFile = req.files?.file?.[0]
       const previewFile = req.files?.preview?.[0] || null
+      const templateId = String(req.body.templateId || '').trim() || null
+      let imageEdits = null
 
       if (!originalFile) {
         return res.status(400).json({ error: 'Photo file is required' })
       }
+
+      if (req.body.imageEdits) {
+        try {
+          imageEdits = JSON.parse(String(req.body.imageEdits))
+        } catch {
+          return res.status(400).json({ error: 'Invalid image edits payload' })
+        }
+      }
+
+      const template = templateId ? assertIdentificationTemplateAccess(templateId, projectId) : null
 
       const requestedName = String(req.body.name || '').trim()
       const resolvedName =
@@ -268,8 +282,20 @@ export function importRestorePayloadRoutes(app, ctx) {
         tags: parseTags(req.body.tags),
         image_path: path.relative(uploadsDir, originalFile.path),
         preview_path: previewFile ? path.relative(uploadsDir, previewFile.path) : null,
+        image_edits: imageEdits,
         original_filename: originalFile.originalname,
       })
+
+      if (template) {
+        const now = new Date().toISOString()
+        upsertNodeIdentification.run({
+          node_id: nodeId,
+          template_id: template.id,
+          created_by_user_id: req.user.id,
+          created_at: now,
+          updated_at: now,
+        })
+      }
 
       broadcastProjectEvent(projectId)
       res.status(201).json(serializeNodeForUser(assertNode(nodeId), req.user.id))
@@ -310,9 +336,21 @@ export function importRestorePayloadRoutes(app, ctx) {
 
       const originalFile = req.files?.file?.[0]
       const previewFile = req.files?.preview?.[0] || null
+      const templateId = String(req.body.templateId || '').trim() || null
+      let imageEdits = null
       if (!originalFile) {
         return res.status(400).json({ error: 'Photo file is required' })
       }
+
+      if (req.body.imageEdits) {
+        try {
+          imageEdits = JSON.parse(String(req.body.imageEdits))
+        } catch {
+          return res.status(400).json({ error: 'Invalid image edits payload' })
+        }
+      }
+
+      const template = templateId ? assertIdentificationTemplateAccess(templateId, projectId) : null
 
       const requestedName = String(req.body.name || '').trim()
       const resolvedName =
@@ -328,8 +366,20 @@ export function importRestorePayloadRoutes(app, ctx) {
         tags: parseTags(req.body.tags),
         image_path: path.relative(uploadsDir, originalFile.path),
         preview_path: previewFile ? path.relative(uploadsDir, previewFile.path) : null,
+        image_edits: imageEdits,
         original_filename: originalFile.originalname,
       })
+
+      if (template) {
+        const now = new Date().toISOString()
+        upsertNodeIdentification.run({
+          node_id: nodeId,
+          template_id: template.id,
+          created_by_user_id: session.userId || project.owner_user_id || null,
+          created_at: now,
+          updated_at: now,
+        })
+      }
 
       broadcastProjectEvent(projectId)
       res.status(201).json(serializeNodeForUser(assertNode(nodeId), null))

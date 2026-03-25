@@ -4,9 +4,8 @@ import { collectDescendantIds, findNode } from '../lib/tree'
 import IconButton from './IconButton'
 
 const statusOptions = [
-  { value: 'none', label: 'No template' },
-  { value: 'incomplete', label: 'Incomplete' },
-  { value: 'reviewed', label: 'Complete' },
+  { value: 'new', label: 'New' },
+  { value: 'reviewed', label: 'Reviewed' },
   { value: 'needs_attention', label: 'Needs Attention' },
 ]
 
@@ -59,6 +58,7 @@ export default function SearchPanel({
   const [query, setQuery] = useState('')
   const [filterMenuOpen, setFilterMenuOpen] = useState(false)
   const [selectedTemplateIds, setSelectedTemplateIds] = useState([])
+  const [selectedTags, setSelectedTags] = useState([])
   const [selectedOwnerUsernames, setSelectedOwnerUsernames] = useState([])
   const [anyTemplateOnly, setAnyTemplateOnly] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
@@ -75,6 +75,7 @@ export default function SearchPanel({
     Number(Boolean(typeFilter)) +
     Number(Boolean(selectionScopeFilter)) +
     Number(Boolean(variantPresenceFilter)) +
+    Number(Boolean(selectedTags.length)) +
     Number(Boolean(selectedOwnerUsernames.length))
   const templateNameById = useMemo(
     () => new Map((templates || []).map((template) => [template.id, template.name])),
@@ -89,6 +90,18 @@ export default function SearchPanel({
             .filter(Boolean),
         ),
       ).sort((a, b) => a.localeCompare(b)),
+    [tree?.nodes],
+  )
+  const tagOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (tree?.nodes || [])
+            .flatMap((node) => node.tags || [])
+            .map((tag) => String(tag || '').trim())
+            .filter(Boolean),
+        ),
+      ).sort((left, right) => left.localeCompare(right)),
     [tree?.nodes],
   )
   const selectionScopeIds = useMemo(() => {
@@ -128,14 +141,7 @@ export default function SearchPanel({
         if (!statusFilter) {
           return true
         }
-        if (statusFilter === 'needs_attention') {
-          return Boolean(node.needsAttention)
-        }
-        const status = node.identification?.status || 'none'
-        if (statusFilter === 'incomplete') {
-          return status === 'incomplete' || status === 'pending_review'
-        }
-        return status === statusFilter
+        return (node.reviewStatus || 'new') === statusFilter
       })
       .filter((node) => {
         if (!notesFilter) {
@@ -143,6 +149,12 @@ export default function SearchPanel({
         }
         const hasNotes = Boolean(node.notes?.trim())
         return notesFilter === 'has_notes' ? hasNotes : !hasNotes
+      })
+      .filter((node) => {
+        if (!selectedTags.length) {
+          return true
+        }
+        return selectedTags.some((tag) => (node.tags || []).some((nodeTag) => nodeTag === tag))
       })
       .filter((node) => {
         if (!selectionScopeIds) {
@@ -182,7 +194,7 @@ export default function SearchPanel({
         }
         return sortDirection === 'desc' ? comparison * -1 : comparison
       })
-  }, [anyTemplateOnly, notesFilter, query, selectedOwnerUsernames, selectedTemplateIds, selectionScopeIds, sortDirection, sortField, statusFilter, tree?.nodes, typeFilter, variantPresenceFilter])
+  }, [anyTemplateOnly, notesFilter, query, selectedOwnerUsernames, selectedTags, selectedTemplateIds, selectionScopeIds, sortDirection, sortField, statusFilter, tree?.nodes, typeFilter, variantPresenceFilter])
 
   useEffect(() => {
     onResultsChange?.(results.map((node) => node.id))
@@ -287,6 +299,7 @@ export default function SearchPanel({
                         setTypeFilter('')
                         setSelectionScopeFilter(false)
                         setVariantPresenceFilter('')
+                        setSelectedTags([])
                         setSelectedOwnerUsernames([])
                       }}
                     >
@@ -341,6 +354,35 @@ export default function SearchPanel({
                         label: 'Selected and Children',
                         onClick: () => setSelectionScopeFilter((current) => !current),
                       })}
+                    </div>
+                  </div>
+                  <div className="search-panel__filter-group">
+                    <span className="search-panel__filter-label">Tags</span>
+                    <div className="search-panel__option-list search-panel__option-list--scroll">
+                      {tagOptions.map((tag) => (
+                        <button
+                          key={tag}
+                          className={`search-panel__option-button ${
+                            selectedTags.includes(tag) ? 'search-panel__option-button--selected' : ''
+                          }`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedTags((current) =>
+                              current.includes(tag)
+                                ? current.filter((item) => item !== tag)
+                                : [...current, tag],
+                            )
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`search-panel__option-indicator search-panel__option-indicator--multiple ${
+                              selectedTags.includes(tag) ? 'search-panel__option-indicator--selected' : ''
+                            }`}
+                          />
+                          <span>{tag}</span>
+                        </button>
+                      ))}
                     </div>
                   </div>
                   <div className="search-panel__filter-group">
@@ -493,8 +535,8 @@ export default function SearchPanel({
                         {templateNameById.get(node.identification.templateId) || 'Template'}
                       </span>
                     ) : null}
-                    {node.identification?.status === 'reviewed' ? (
-                      <span className="search-panel__result-complete" aria-label="Complete" title="Complete">
+                    {node.reviewStatus === 'reviewed' ? (
+                      <span className="search-panel__result-complete" aria-label="Reviewed" title="Reviewed">
                         <i aria-hidden="true" className="fa-solid fa-check" />
                       </span>
                     ) : null}

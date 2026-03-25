@@ -20,8 +20,16 @@ import useProjectSync from './hooks/useProjectSync'
 import useUndoRedo from './hooks/useUndoRedo'
 import useWorkspaceInteractions from './hooks/useWorkspaceInteractions'
 import { ApiError, api, uploadWithProgress } from './lib/api'
-import { defaultProjectSettings, defaultUserProjectUi, panelIds, SIDEBAR_RAIL_WIDTH } from './lib/constants'
-import { isDesktopEnvironment, openDesktopPanelWindow } from './lib/desktop'
+import { defaultProjectSettings, defaultUserProjectUi, getPanelMinWidth, panelIds, SIDEBAR_RAIL_WIDTH } from './lib/constants'
+import {
+  closeDesktopWindow,
+  getDesktopWindowState,
+  isDesktopEnvironment,
+  minimizeDesktopWindow,
+  openDesktopPanelWindow,
+  subscribeDesktopWindowState,
+  toggleMaximizeDesktopWindow,
+} from './lib/desktop'
 import { blobFromUrl, createPreviewFile } from './lib/image'
 import {
   buildClientTree,
@@ -51,6 +59,8 @@ import {
 } from './components/icons'
 
 const PRESENCE_COLORS = ['#6f9cff', '#5fc9a8', '#d48cff', '#f0a35b', '#58c5d8', '#d86f9f', '#a6c95b', '#c27cff']
+const DESKTOP_SELECTION_SYNC_CHANNEL = 'nodetrace-desktop-selection'
+const DESKTOP_PANEL_SYNC_CHANNEL = 'nodetrace-desktop-panels'
 
 function getPresenceColor(id) {
   const value = String(id || '')
@@ -78,6 +88,8 @@ function getPresenceInitials(username) {
 function App() {
   const { panelWindowId } = getUrlState()
   const isPanelWindow = Boolean(panelWindowId)
+  const windowInstanceIdRef = useRef(`window-${Math.random().toString(36).slice(2, 10)}`)
+  const applyingRemoteSelectionRef = useRef(false)
   const [currentUser, setCurrentUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [projects, setProjects] = useState([])
@@ -90,6 +102,8 @@ function App() {
   const [status, setStatus] = useState('Loading projects...')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [desktopWindowMaximized, setDesktopWindowMaximized] = useState(false)
+  const [poppedOutPanelIds, setPoppedOutPanelIds] = useState([])
   const [openMenu, setOpenMenu] = useState(null)
   const [showProjectDialog, setShowProjectDialog] = useState(null)
   const [templateDialog, setTemplateDialog] = useState(null)
@@ -125,6 +139,7 @@ function App() {
   const [pendingUploadMode, setPendingUploadMode] = useState('child')
   const [cameraDevices, setCameraDevices] = useState([])
   const [selectedCameraId, setSelectedCameraId] = useState('')
+  const [selectedCameraTemplateId, setSelectedCameraTemplateId] = useState('')
   const [cameraNotice, setCameraNotice] = useState('')
   const [cameraSelection, setCameraSelection] = useState(null)
   const [loadedImages, setLoadedImages] = useState({})
@@ -226,12 +241,19 @@ function App() {
 
 
   function toggleSidebarPanel(panelId) {
+    if (!isPanelWindow && isDesktopEnvironment() && poppedOutPanelIds.includes(panelId)) {
+      void popoutPanel(panelId)
+      return
+    }
+
     const side = panelDock[panelId]
+    const minWidth = getPanelMinWidth(panelId)
     if (side === 'left') {
       if (leftSidebarOpen && resolvedLeftActivePanel === panelId) {
         setLeftSidebarOpen(false)
         return
       }
+      setLeftSidebarWidth((current) => Math.max(current, minWidth))
       setLeftActivePanel(panelId)
       setLeftSidebarOpen(true)
       return
@@ -241,6 +263,7 @@ function App() {
       setRightSidebarOpen(false)
       return
     }
+    setRightSidebarWidth((current) => Math.max(current, minWidth))
     setRightActivePanel(panelId)
     setRightSidebarOpen(true)
   }
@@ -367,10 +390,28 @@ function App() {
     () => panelIds.filter((panelId) => (panelDock?.[panelId] || defaultUserProjectUi.panelDock[panelId]) === 'right'),
     [panelDock],
   )
-  const resolvedLeftActivePanel = leftDockedPanelIds.includes(leftActivePanel) ? leftActivePanel : leftDockedPanelIds[0] || null
-  const resolvedRightActivePanel = rightDockedPanelIds.includes(rightActivePanel)
+  const availableLeftDockedPanelIds = useMemo(
+    () => leftDockedPanelIds.filter((panelId) => !poppedOutPanelIds.includes(panelId)),
+    [leftDockedPanelIds, poppedOutPanelIds],
+  )
+  const availableRightDockedPanelIds = useMemo(
+    () => rightDockedPanelIds.filter((panelId) => !poppedOutPanelIds.includes(panelId)),
+    [poppedOutPanelIds, rightDockedPanelIds],
+  )
+  const resolvedLeftActivePanel = availableLeftDockedPanelIds.includes(leftActivePanel)
+    ? leftActivePanel
+    : availableLeftDockedPanelIds[0] || null
+  const resolvedRightActivePanel = availableRightDockedPanelIds.includes(rightActivePanel)
     ? rightActivePanel
-    : rightDockedPanelIds[0] || null
+    : availableRightDockedPanelIds[0] || null
+  const leftSidebarMinWidth = resolvedLeftActivePanel
+    ? getPanelMinWidth(resolvedLeftActivePanel)
+    : defaultUserProjectUi.leftSidebarWidth
+  const rightSidebarMinWidth = resolvedRightActivePanel
+    ? getPanelMinWidth(resolvedRightActivePanel)
+    : defaultUserProjectUi.rightSidebarWidth
+  const effectiveLeftSidebarWidth = Math.max(leftSidebarWidth, leftSidebarMinWidth)
+  const effectiveRightSidebarWidth = Math.max(rightSidebarWidth, rightSidebarMinWidth)
 
   const setCanvasTransform = useCallback((nextTransformOrUpdater) => {
     setTransform((current) => {
@@ -430,6 +471,18 @@ function App() {
   const selectionNodesWithTemplates = useMemo(
     () => explicitSelectedNodes.filter((node) => node.identification),
     [explicitSelectedNodes],
+  )
+  const availableTags = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (tree?.nodes || [])
+            .flatMap((node) => node.tags || [])
+            .map((tag) => String(tag || '').trim())
+            .filter(Boolean),
+        ),
+      ).sort((left, right) => left.localeCompare(right)),
+    [tree?.nodes],
   )
   const setEffectiveSelection = useCallback((nodeIds, preferredPrimaryId = null) => {
     const validIds = Array.from(new Set((nodeIds || []).filter(Boolean))).filter(
@@ -797,6 +850,80 @@ function App() {
     }
     updateUrlState(selectedProjectId, selectedNodeId || getUrlState().nodeId)
   }, [authReady, currentUser, selectedNodeId, selectedProjectId, tree])
+
+  useEffect(() => {
+    if (!isDesktopEnvironment() || typeof BroadcastChannel === 'undefined') {
+      return undefined
+    }
+
+    const channel = new BroadcastChannel(DESKTOP_SELECTION_SYNC_CHANNEL)
+    const handleMessage = (event) => {
+      const payload = event.data || {}
+      if (payload.sourceId === windowInstanceIdRef.current) {
+        return
+      }
+
+      const nextProjectId = payload.projectId || null
+      const nextNodeId = payload.nodeId || null
+      if (!nextProjectId) {
+        return
+      }
+
+      applyingRemoteSelectionRef.current = true
+      updateUrlState(nextProjectId, nextNodeId)
+      if (nextProjectId !== selectedProjectId) {
+        setSelectedProjectId(nextProjectId)
+        setSelectedNodeId(nextNodeId)
+      } else if (nextNodeId && nextNodeId !== selectedNodeId) {
+        setSelectedNodeId(nextNodeId)
+      }
+    }
+
+    channel.addEventListener('message', handleMessage)
+    return () => {
+      channel.removeEventListener('message', handleMessage)
+      channel.close()
+    }
+  }, [selectedNodeId, selectedProjectId])
+
+  useEffect(() => {
+    if (!isDesktopEnvironment() || typeof BroadcastChannel === 'undefined' || !selectedProjectId) {
+      return
+    }
+    if (applyingRemoteSelectionRef.current) {
+      applyingRemoteSelectionRef.current = false
+      return
+    }
+
+    const channel = new BroadcastChannel(DESKTOP_SELECTION_SYNC_CHANNEL)
+    channel.postMessage({
+      sourceId: windowInstanceIdRef.current,
+      projectId: selectedProjectId,
+      nodeId: selectedNodeId || null,
+    })
+    channel.close()
+  }, [selectedNodeId, selectedProjectId])
+
+  useEffect(() => {
+    if (!isDesktopEnvironment()) {
+      return
+    }
+
+    let cancelled = false
+    getDesktopWindowState().then((state) => {
+      if (!cancelled) {
+        setDesktopWindowMaximized(Boolean(state?.maximized))
+      }
+    })
+    const unsubscribe = subscribeDesktopWindowState((state) => {
+      setDesktopWindowMaximized(Boolean(state?.maximized))
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     setMultiSelectedNodeIds([])
@@ -1275,7 +1402,7 @@ function App() {
     return api(`/api/nodes/${nodeId}`, { method: 'DELETE' })
   }
 
-  async function uploadPhotoFilesRequest(projectId, files, targetNodeId, mode = 'child') {
+  async function uploadPhotoFilesRequest(projectId, files, targetNodeId, mode = 'child', options = {}) {
     const createdNodes = []
 
     for (const file of files) {
@@ -1290,6 +1417,12 @@ function App() {
       formData.append('name', '<untitled>')
       formData.append('notes', '')
       formData.append('tags', '')
+      if (options.imageEdits) {
+        formData.append('imageEdits', JSON.stringify(options.imageEdits))
+      }
+      if (options.templateId) {
+        formData.append('templateId', options.templateId)
+      }
       formData.append('file', file)
       if (previewFile) {
         formData.append('preview', previewFile)
@@ -1541,7 +1674,7 @@ function App() {
   useEffect(() => {
     if (!selectedNode) {
       setEditTargetId(null)
-      setEditForm({ name: '', notes: '', tags: '' })
+      setEditForm({ name: '', notes: '', tags: [] })
       return
     }
 
@@ -1553,7 +1686,7 @@ function App() {
     setEditForm({
       name: selectedNode.name,
       notes: selectedNode.notes || '',
-      tags: (selectedNode.tags || []).join(', '),
+      tags: selectedNode.tags || [],
     })
   }, [editTargetId, selectedNode, setEditForm, setEditTargetId])
 
@@ -1913,7 +2046,7 @@ function App() {
     }
   }
 
-  async function patchNodeNeedsAttentionRequest(nodeId, needsAttention) {
+  async function patchNodeReviewStatusRequest(nodeId, reviewStatus) {
     if (!nodeId) {
       return null
     }
@@ -1921,11 +2054,12 @@ function App() {
     if (currentNode) {
       applyNodeUpdate({
         ...currentNode,
-        needsAttention: Boolean(needsAttention),
+        reviewStatus,
+        needsAttention: reviewStatus === 'needs_attention',
       })
     }
     try {
-      return await patchNodeRequest(nodeId, { needsAttention: Boolean(needsAttention) })
+      return await patchNodeRequest(nodeId, { reviewStatus })
     } catch (error) {
       if (currentNode) {
         applyNodeUpdate(currentNode)
@@ -2181,7 +2315,7 @@ function App() {
           setEditForm({
             name: refreshedSelectedNode.name,
             notes: refreshedSelectedNode.notes || '',
-            tags: (refreshedSelectedNode.tags || []).join(', '),
+            tags: refreshedSelectedNode.tags || [],
           })
         }
       }
@@ -2685,7 +2819,7 @@ function App() {
     fileInputRef.current?.click()
   }
 
-  async function uploadFiles(files, targetNodeId = selectedNode?.id, mode = 'child') {
+  async function uploadFiles(files, targetNodeId = selectedNode?.id, mode = 'child', options = {}) {
     if (!targetNodeId || files.length === 0) {
       return
     }
@@ -2699,7 +2833,7 @@ function App() {
         const rollbackLocalEvent = beginLocalEventExpectation()
         let createdNodes = []
         try {
-          createdNodes = await uploadPhotoFilesRequest(selectedProjectId, files, targetNodeId, mode)
+          createdNodes = await uploadPhotoFilesRequest(selectedProjectId, files, targetNodeId, mode, options)
         } catch (error) {
           rollbackLocalEvent()
           throw error
@@ -3212,8 +3346,10 @@ function App() {
     setDragPreview,
     setEffectiveSelection,
     setLeftSidebarWidth,
+    leftSidebarMinWidth,
     setPreviewTransform,
     setRightSidebarWidth,
+    rightSidebarMinWidth,
     setSelectedCameraId,
     setTransform: setCanvasTransform,
     transform,
@@ -3230,6 +3366,66 @@ function App() {
     pendingInitialCanvasFitRef.current = false
     fitCanvasToView()
   }, [fitCanvasToView, layout.height, layout.width, projectUiReady, tree?.project])
+
+  useEffect(() => {
+    if (!resolvedLeftActivePanel) {
+      return
+    }
+    setLeftSidebarWidth((current) => Math.max(current, leftSidebarMinWidth))
+  }, [leftSidebarMinWidth, resolvedLeftActivePanel])
+
+  useEffect(() => {
+    if (!resolvedRightActivePanel) {
+      return
+    }
+    setRightSidebarWidth((current) => Math.max(current, rightSidebarMinWidth))
+  }, [resolvedRightActivePanel, rightSidebarMinWidth])
+
+  useEffect(() => {
+    if (!isDesktopEnvironment()) {
+      return undefined
+    }
+
+    const channel = new BroadcastChannel(DESKTOP_PANEL_SYNC_CHANNEL)
+    const syncPoppedPanel = (panelId, open) => {
+      if (!panelId) {
+        return
+      }
+      setPoppedOutPanelIds((current) => {
+        if (open) {
+          return current.includes(panelId) ? current : [...current, panelId]
+        }
+        return current.filter((id) => id !== panelId)
+      })
+    }
+
+    channel.onmessage = (event) => {
+      const message = event.data || {}
+      if (message.type === 'panel-open') {
+        syncPoppedPanel(message.panelId, true)
+      }
+      if (message.type === 'panel-close') {
+        syncPoppedPanel(message.panelId, false)
+      }
+    }
+
+    if (isPanelWindow && panelWindowId) {
+      channel.postMessage({ type: 'panel-open', panelId: panelWindowId })
+      const notifyClose = () => {
+        channel.postMessage({ type: 'panel-close', panelId: panelWindowId })
+      }
+      window.addEventListener('beforeunload', notifyClose)
+      return () => {
+        window.removeEventListener('beforeunload', notifyClose)
+        notifyClose()
+        channel.close()
+      }
+    }
+
+    return () => {
+      channel.close()
+    }
+  }, [isPanelWindow, panelWindowId])
 
   useLayoutEffect(() => {
     if (!pendingFocusNodeIdRef.current || pendingFocusNodeIdRef.current !== selectedNodeId) {
@@ -3275,9 +3471,13 @@ function App() {
             cameraVideoRef={cameraVideoRef}
             cameraViewportRef={cameraViewportRef}
             captureFullCameraFrame={captureFullCameraFrame}
+            identificationTemplates={identificationTemplates}
             selectedCameraId={selectedCameraId}
+            selectedCameraTemplateId={selectedCameraTemplateId}
             selectedNode={selectedNode}
+            setCameraSelection={setCameraSelection}
             setSelectedCameraId={setSelectedCameraId}
+            setSelectedCameraTemplateId={setSelectedCameraTemplateId}
           />
         ),
       },
@@ -3303,27 +3503,20 @@ function App() {
         icon: <WrenchIcon />,
         content: (
           <InspectorPanel
+            availableTags={availableTags}
             busy={busy}
             bulkSelectionCount={bulkSelectionCount}
-            bulkTemplateCount={selectionNodesWithTemplates.length}
             editForm={editForm}
             editTargetNode={editTargetNode}
             error={error}
             hasBulkSelection={hasBulkSelection}
-            hasIdentificationTemplates={identificationTemplates.length > 0}
             hasLockedSelectionRoot={hasLockedSelectionRoot}
-            identification={selectedNode?.identification || null}
             nameInputRef={nameInputRef}
-            openApplyTemplateDialog={() => {
-              setError('')
-              setShowProjectDialog('apply-template')
-            }}
-            openRemoveTemplateDialog={() => requestRemoveIdentificationTemplates(effectiveSelectedNodeIds)}
+            patchNodeReviewStatus={patchNodeReviewStatusRequest}
             saveNodeDraft={saveNodeDraft}
             selectedNode={selectedNode}
             setDeleteNodeOpen={setDeleteNodeOpen}
             setEditForm={setEditForm}
-            setRemoveIdentificationNodeId={(nodeId) => requestRemoveIdentificationTemplates([nodeId])}
             status={status}
           />
         ),
@@ -3338,11 +3531,16 @@ function App() {
             aiFillRunning={aiFillNodeId === selectedNode?.id}
             busy={busy}
             clearError={() => setError('')}
+            hasIdentificationTemplates={identificationTemplates.length > 0}
             hasBulkSelection={hasBulkSelection}
             identification={selectedNode?.identification || null}
-            patchNodeNeedsAttention={patchNodeNeedsAttentionRequest}
             patchIdentificationField={patchIdentificationFieldRequest}
             runIdentificationAiFill={runIdentificationAiFillRequest}
+            openApplyTemplateDialog={() => {
+              setError('')
+              setShowProjectDialog('apply-template')
+            }}
+            openRemoveTemplateDialog={() => requestRemoveIdentificationTemplates([selectedNode.id])}
             selectedNode={selectedNode}
           />
         ),
@@ -3444,16 +3642,25 @@ function App() {
   const activeLeftPanel = resolvedLeftActivePanel ? panelDefinitions[resolvedLeftActivePanel] : null
   const activeRightPanel = resolvedRightActivePanel ? panelDefinitions[resolvedRightActivePanel] : null
   const windowPanel = panelWindowId ? panelDefinitions[panelWindowId] : null
-  const effectiveLeftSidebarOpen = projectUiReady ? leftSidebarOpen : false
-  const effectiveRightSidebarOpen = projectUiReady ? rightSidebarOpen : false
+  const effectiveLeftSidebarOpen = projectUiReady ? leftSidebarOpen && Boolean(activeLeftPanel) : false
+  const effectiveRightSidebarOpen = projectUiReady ? rightSidebarOpen && Boolean(activeRightPanel) : false
   const canPopoutPanels = isDesktopEnvironment() && !isPanelWindow
 
   async function popoutPanel(panelId) {
-    await openDesktopPanelWindow({
+    const result = await openDesktopPanelWindow({
       panelId,
       projectId: selectedProjectId,
       nodeId: selectedNodeId,
     })
+    if (!result?.ok) {
+      return
+    }
+    setPoppedOutPanelIds((current) => (current.includes(panelId) ? current : [...current, panelId]))
+    if (panelDock[panelId] === 'left') {
+      setLeftSidebarOpen(false)
+      return
+    }
+    setRightSidebarOpen(false)
   }
 
   if (!authReady) {
@@ -3480,7 +3687,37 @@ function App() {
         <div className="panel-window-shell">
           {windowPanel ? (
             <>
-              <div className="panel-window-shell__titlebar">{windowPanel.title}</div>
+              <div className="panel-window-shell__titlebar">
+                <span className="panel-window-shell__title">{windowPanel.title}</span>
+                {isDesktopEnvironment() ? (
+                  <div className="desktop-window-controls panel-window-shell__controls">
+                    <button
+                      aria-label="Minimize window"
+                      className="desktop-window-controls__button"
+                      onClick={() => void minimizeDesktopWindow()}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-minus" />
+                    </button>
+                    <button
+                      aria-label={desktopWindowMaximized ? 'Restore window' : 'Maximize window'}
+                      className="desktop-window-controls__button"
+                      onClick={() => void toggleMaximizeDesktopWindow()}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className={`fa-regular ${desktopWindowMaximized ? 'fa-clone' : 'fa-square'}`} />
+                    </button>
+                    <button
+                      aria-label="Close window"
+                      className="desktop-window-controls__button desktop-window-controls__button--close"
+                      onClick={() => void closeDesktopWindow()}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-xmark" />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <div className="panel-window-shell__body">{windowPanel.content}</div>
             </>
           ) : (
@@ -3509,7 +3746,6 @@ function App() {
         historyState={historyState}
         importInputRef={importInputRef}
         importProjectName={importProjectName}
-        leftActivePanel={resolvedLeftActivePanel}
         leftSidebarOpen={effectiveLeftSidebarOpen}
         mobileConnectionCount={mobileConnectionCount}
         onPresenceSelect={selectNodeAndFocus}
@@ -3521,9 +3757,9 @@ function App() {
         presenceUsers={remotePresenceUsers}
         projectName={tree?.project?.name}
         projects={projects}
+        desktopWindowMaximized={desktopWindowMaximized}
         redo={redo}
         invertSelection={invertEffectiveSelection}
-        rightActivePanel={resolvedRightActivePanel}
         rightSidebarOpen={effectiveRightSidebarOpen}
         selectedNode={selectedNode}
         selectedProjectId={selectedProjectId}
@@ -3553,6 +3789,10 @@ function App() {
         tree={tree}
         undo={undo}
         uploadFiles={uploadFiles}
+        onDesktopClose={() => closeDesktopWindow()}
+        onDesktopMinimize={() => minimizeDesktopWindow()}
+        onDesktopToggleMaximize={() => toggleMaximizeDesktopWindow()}
+        showDesktopControls={isDesktopEnvironment()}
         style={{
           gridColumn: '1 / -1',
           gridRow: '1 / 2',
@@ -3563,7 +3803,7 @@ function App() {
         style={{
           gridColumn: '1 / -1',
           gridRow: '2 / 3',
-          gridTemplateColumns: `${SIDEBAR_RAIL_WIDTH}px ${effectiveLeftSidebarOpen ? `${leftSidebarWidth}px` : '0px'} minmax(0, 1fr) ${effectiveRightSidebarOpen ? `${rightSidebarWidth}px` : '0px'} ${SIDEBAR_RAIL_WIDTH}px`,
+          gridTemplateColumns: `${SIDEBAR_RAIL_WIDTH}px ${effectiveLeftSidebarOpen ? `${effectiveLeftSidebarWidth}px` : '0px'} minmax(0, 1fr) ${effectiveRightSidebarOpen ? `${effectiveRightSidebarWidth}px` : '0px'} ${SIDEBAR_RAIL_WIDTH}px`,
         }}
       >
         <SidebarRail

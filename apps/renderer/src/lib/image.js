@@ -109,6 +109,54 @@ export function mapDisplayedCropToSourceCrop(displayCrop, rotationTurns) {
   return displayCrop
 }
 
+export function mapViewportSelectionToSourceCrop(selection, options = {}) {
+  if (!selection) {
+    return null
+  }
+
+  const turns = ((Number.parseInt(options.rotationTurns, 10) || 0) % 4 + 4) % 4
+  const sourceWidth = Number(options.sourceWidth) || 0
+  const sourceHeight = Number(options.sourceHeight) || 0
+  const containerWidth = Number(options.containerWidth) || 0
+  const containerHeight = Number(options.containerHeight) || 0
+  if (!sourceWidth || !sourceHeight || !containerWidth || !containerHeight) {
+    return null
+  }
+
+  const displayedSourceWidth = turns % 2 === 0 ? sourceWidth : sourceHeight
+  const displayedSourceHeight = turns % 2 === 0 ? sourceHeight : sourceWidth
+  const displayedRect = getContainedRect(containerWidth, containerHeight, displayedSourceWidth, displayedSourceHeight)
+  if (!displayedRect.width || !displayedRect.height) {
+    return null
+  }
+
+  const left = Math.max(displayedRect.x, Math.min(selection.x, displayedRect.x + displayedRect.width))
+  const top = Math.max(displayedRect.y, Math.min(selection.y, displayedRect.y + displayedRect.height))
+  const right = Math.max(
+    displayedRect.x,
+    Math.min(selection.x + selection.width, displayedRect.x + displayedRect.width),
+  )
+  const bottom = Math.max(
+    displayedRect.y,
+    Math.min(selection.y + selection.height, displayedRect.y + displayedRect.height),
+  )
+  const width = right - left
+  const height = bottom - top
+  if (width <= 0 || height <= 0) {
+    return null
+  }
+
+  return mapDisplayedCropToSourceCrop(
+    {
+      x: (left - displayedRect.x) / displayedRect.width,
+      y: (top - displayedRect.y) / displayedRect.height,
+      width: width / displayedRect.width,
+      height: height / displayedRect.height,
+    },
+    turns,
+  )
+}
+
 function clampColor(value) {
   return Math.max(0, Math.min(255, value))
 }

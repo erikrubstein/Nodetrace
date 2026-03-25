@@ -1,16 +1,23 @@
 export default function CameraPanel({
-  beginCameraSelection,
   busy,
   cameraDevices,
   cameraNotice,
-  cameraSelection,
   cameraVideoRef,
   cameraViewportRef,
   captureFullCameraFrame,
+  identificationTemplates,
   selectedCameraId,
+  selectedCameraTemplateId,
   selectedNode,
   setSelectedCameraId,
+  setSelectedCameraTemplateId,
 }) {
+  async function handleCapture(mode = 'child') {
+    await captureFullCameraFrame(mode, {
+      templateId: selectedCameraTemplateId || null,
+    })
+  }
+
   return (
     <div className="camera-panel">
       <div className="inspector__section field-stack">
@@ -21,6 +28,17 @@ export default function CameraPanel({
             {cameraDevices.map((device, index) => (
               <option key={device.deviceId || index} value={device.deviceId}>
                 {device.label || `Camera ${index + 1}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Template</span>
+          <select value={selectedCameraTemplateId} onChange={(event) => setSelectedCameraTemplateId(event.target.value)}>
+            <option value="">No template</option>
+            {(identificationTemplates || []).map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
               </option>
             ))}
           </select>
@@ -36,7 +54,7 @@ export default function CameraPanel({
           <button
             className="primary-button wide"
             disabled={!selectedNode || selectedNode.isVariant || busy}
-            onClick={() => void captureFullCameraFrame()}
+            onClick={() => void handleCapture()}
             type="button"
           >
             Take Photo
@@ -44,7 +62,7 @@ export default function CameraPanel({
           <button
             className="ghost-button wide"
             disabled={!selectedNode || busy}
-            onClick={() => void captureFullCameraFrame('variant')}
+            onClick={() => void handleCapture('variant')}
             type="button"
           >
             Take Variant Photo
@@ -54,22 +72,10 @@ export default function CameraPanel({
       <div
         ref={cameraViewportRef}
         className={`camera-viewport ${selectedNode?.isVariant ? 'disabled' : ''}`}
-        onPointerDown={beginCameraSelection}
       >
         <video ref={cameraVideoRef} autoPlay className="camera-video" muted playsInline />
-        {cameraSelection ? (
-          <div
-            className="camera-selection"
-            style={{
-              left: `${cameraSelection.x}px`,
-              top: `${cameraSelection.y}px`,
-              width: `${cameraSelection.width}px`,
-              height: `${cameraSelection.height}px`,
-            }}
-          />
-        ) : null}
       </div>
-      <div className="inspector__notice">{cameraNotice || 'Drag to crop and upload.'}</div>
+      <div className="inspector__notice">{cameraNotice || 'Capture a photo into the selected node.'}</div>
     </div>
   )
 }

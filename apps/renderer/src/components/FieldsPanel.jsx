@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 
 function formatFieldDraft(field) {
   if (!field) {
@@ -11,11 +11,13 @@ export default function FieldsPanel({
   aiFillRunning,
   busy,
   clearError,
+  hasIdentificationTemplates,
   hasBulkSelection,
   identification,
-  patchNodeNeedsAttention,
   patchIdentificationField,
   runIdentificationAiFill,
+  openApplyTemplateDialog,
+  openRemoveTemplateDialog,
   selectedNode,
 }) {
   const [fieldDrafts, setFieldDrafts] = useState(() => {
@@ -27,12 +29,6 @@ export default function FieldsPanel({
   })
   const [dirtyFields, setDirtyFields] = useState({})
 
-  const reviewProgress = useMemo(() => {
-    if (!identification) {
-      return null
-    }
-    return `${identification.reviewedFieldCount}/${identification.totalReviewFieldCount}`
-  }, [identification])
   const hasAiFields = Boolean(identification?.fields?.some((field) => field.mode === 'ai'))
 
   function getFieldRequestValue(field) {
@@ -103,18 +99,6 @@ export default function FieldsPanel({
     }
   }
 
-  async function handleToggleNeedsAttention() {
-    if (!selectedNode) {
-      return
-    }
-    clearError()
-    try {
-      await patchNodeNeedsAttention(selectedNode.id, !selectedNode.needsAttention)
-    } catch {
-      // Parent handles global error state.
-    }
-  }
-
   if (!selectedNode) {
     return (
       <div className="fields-panel">
@@ -137,48 +121,51 @@ export default function FieldsPanel({
 
   return (
     <div className="fields-panel">
-      <div className="inspector__section field-stack">
-        <div className="inspector__title">Status</div>
-        {identification ? (
-          <div className={`identification-status-block identification-status-block--${identification.status}`}>
-            {identification.status === 'reviewed' ? 'Complete' : `Incomplete ${reviewProgress}`}
-          </div>
-        ) : (
-          <div className="identification-status-block identification-status-block--incomplete">No Template</div>
-        )}
-        <button
-          className={`ghost-button wide needs-attention-button ${selectedNode.needsAttention ? 'is-active' : ''}`}
-          disabled={busy}
-          onClick={() => void handleToggleNeedsAttention()}
-          type="button"
-        >
-          Needs Attention
-        </button>
-      </div>
-
-      {hasAiFields ? (
+      {!identification ? (
         <div className="inspector__section field-stack">
-          <div className="inspector__title">AI</div>
+          <div className="inspector__title">Template</div>
           <button
             className="ghost-button wide"
-            disabled={busy}
-            onClick={() => void runIdentificationAiFill(selectedNode.id)}
+            disabled={!hasIdentificationTemplates || busy}
+            onClick={openApplyTemplateDialog}
             type="button"
           >
-            {aiFillRunning ? (
-              <>
-                <i aria-hidden="true" className="fa-solid fa-spinner fa-spin button-spinner" />
-                <span>AI Fill</span>
-              </>
-            ) : (
-              'AI Fill'
-            )}
+            Apply Template
           </button>
+          <div className="inspector__empty">Apply a template to work with structured data.</div>
         </div>
-      ) : null}
-
-      {identification ? (
+      ) : (
         <div className="inspector__section field-stack">
+          <div className="identification-template__row">
+            <span className="identification-template__name">{identification.templateName}</span>
+            <div className="identification-template__actions">
+              <button
+                className="ghost-button identification-template__action"
+                disabled={busy}
+                onClick={openRemoveTemplateDialog}
+                type="button"
+              >
+                Remove Template
+              </button>
+            </div>
+          </div>
+          {hasAiFields ? (
+            <button
+              className="ghost-button wide"
+              disabled={busy}
+              onClick={() => void runIdentificationAiFill(selectedNode.id)}
+              type="button"
+            >
+              {aiFillRunning ? (
+                <>
+                  <i aria-hidden="true" className="fa-solid fa-spinner fa-spin button-spinner" />
+                  <span>AI Fill</span>
+                </>
+              ) : (
+                'AI Fill'
+              )}
+            </button>
+          ) : null}
           <div className="inspector__title">Fields</div>
           <div className="identification-fields">
             {identification.fields.map((field) => {
@@ -221,23 +208,19 @@ export default function FieldsPanel({
                       />
                     )}
                     <button
-                      aria-label={field.reviewed ? `Unreview ${field.label}` : `Review ${field.label}`}
+                      aria-label={field.reviewed ? `Unlock ${field.label}` : `Lock ${field.label}`}
                       className={`identification-field__review-toggle ${field.reviewed ? 'is-reviewed' : ''}`}
                       disabled={busy}
                       onClick={() => void handleToggleReviewed(field)}
                       type="button"
                     >
-                      <i aria-hidden="true" className="fa-solid fa-check" />
+                      <i aria-hidden="true" className={`fa-solid ${field.reviewed ? 'fa-lock' : 'fa-lock-open'}`} />
                     </button>
                   </div>
                 </div>
               )
             })}
           </div>
-        </div>
-      ) : (
-        <div className="inspector__section">
-          <div className="inspector__empty">Apply a template in Inspector to work with structured fields.</div>
         </div>
       )}
     </div>

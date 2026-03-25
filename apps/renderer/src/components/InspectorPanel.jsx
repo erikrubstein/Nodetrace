@@ -1,22 +1,20 @@
+import TagInput from './TagInput'
+
 export default function InspectorPanel({
+  availableTags,
   busy,
   bulkSelectionCount,
-  bulkTemplateCount,
   editForm,
   editTargetNode,
   error,
   hasBulkSelection,
-  hasIdentificationTemplates,
   hasLockedSelectionRoot,
-  identification,
   nameInputRef,
-  openApplyTemplateDialog,
-  openRemoveTemplateDialog,
+  patchNodeReviewStatus,
   saveNodeDraft,
   selectedNode,
   setDeleteNodeOpen,
   setEditForm,
-  setRemoveIdentificationNodeId,
   status,
 }) {
   const isRootNode = Boolean(selectedNode && selectedNode.parent_id == null && !selectedNode.isVariant)
@@ -69,60 +67,46 @@ export default function InspectorPanel({
                   onBlur={() => void saveNodeDraft(editTargetNode, editForm)}
                 />
               </label>
+              <label>
+                <span>Tags</span>
+                <TagInput
+                  availableTags={availableTags}
+                  onBlur={() => void saveNodeDraft(editTargetNode, editForm)}
+                  onChange={(tags) => setEditForm({ ...editForm, tags })}
+                  onCommit={(tags) => {
+                    const nextForm = { ...editForm, tags }
+                    setEditForm(nextForm)
+                    void saveNodeDraft(editTargetNode, nextForm, { skipNextAutoSave: true })
+                  }}
+                  value={editForm.tags}
+                />
+              </label>
             </div>
           ) : (
             <div className="inspector__section field-stack">
-              <div className="inspector__title">Bulk Actions</div>
+              <div className="inspector__title">Status</div>
               <div className="inspector__notice">{bulkSelectionCount} nodes selected.</div>
             </div>
           )}
 
-          <div className="inspector__section field-stack">
-            <div className="inspector__title">Template</div>
-            {hasBulkSelection ? (
-              <>
-                <button
-                  className="ghost-button wide"
-                  disabled={!hasIdentificationTemplates || busy}
-                  onClick={openApplyTemplateDialog}
-                  type="button"
+          {!hasBulkSelection ? (
+            <div className="inspector__section field-stack">
+              <div className="inspector__title">Status</div>
+              <label>
+                <span>Review Status</span>
+                <select
+                  className={`node-review-status node-review-status--${selectedNode.reviewStatus || 'new'}`}
+                  disabled={busy}
+                  value={selectedNode.reviewStatus || 'new'}
+                  onChange={(event) => void patchNodeReviewStatus(selectedNode.id, event.target.value)}
                 >
-                  Apply Template
-                </button>
-                <button
-                  className="ghost-button wide"
-                  disabled={!bulkTemplateCount || busy}
-                  onClick={openRemoveTemplateDialog}
-                  type="button"
-                >
-                  Clear Template
-                </button>
-              </>
-            ) : !identification ? (
-              <button
-                className="ghost-button wide"
-                disabled={!hasIdentificationTemplates || busy}
-                onClick={openApplyTemplateDialog}
-                type="button"
-              >
-                Apply Template
-              </button>
-            ) : (
-              <div className="identification-template__row">
-                <span className="identification-template__name">{identification.templateName}</span>
-                <div className="identification-template__actions">
-                  <button
-                    className="ghost-button identification-template__action"
-                    disabled={busy}
-                    onClick={() => setRemoveIdentificationNodeId(selectedNode.id)}
-                    type="button"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+                  <option value="new">New</option>
+                  <option value="needs_attention">Needs Attention</option>
+                  <option value="reviewed">Reviewed</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
 
           <div className="inspector__section field-stack">
             <button

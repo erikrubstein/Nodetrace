@@ -6,6 +6,7 @@ import {
   normalizeImageEdits,
   renderImageEditsToCanvas,
 } from '../lib/image'
+import ImageAdjustmentControls from './ImageAdjustmentControls'
 
 function tooltipButton({ active = false, disabled = false, iconClassName, label, onClick }) {
   return (
@@ -570,29 +571,10 @@ export default function PreviewPanel({
             ) : null}
           </div>
 
-          <div className="inspector__section field-stack preview-panel__controls">
-            <div className="inspector__title">Adjustments</div>
-            <label>
-              <span className="preview-panel__control-header"><span>Brightness</span><strong>{localEdits.brightness}</strong></span>
-              <input max="100" min="-100" type="range" value={localEdits.brightness} onChange={(event) => updateEdit('brightness', Number(event.target.value))} />
-            </label>
-            <label>
-              <span className="preview-panel__control-header"><span>Contrast</span><strong>{localEdits.contrast}</strong></span>
-              <input max="200" min="0" type="range" value={localEdits.contrast} onChange={(event) => updateEdit('contrast', Number(event.target.value))} />
-            </label>
-            <label>
-              <span className="preview-panel__control-header"><span>Exposure</span><strong>{localEdits.exposure}</strong></span>
-              <input max="100" min="-100" type="range" value={localEdits.exposure} onChange={(event) => updateEdit('exposure', Number(event.target.value))} />
-            </label>
-            <label>
-              <span className="preview-panel__control-header"><span>Sharpness</span><strong>{localEdits.sharpness}</strong></span>
-              <input max="100" min="0" type="range" value={localEdits.sharpness} onChange={(event) => updateEdit('sharpness', Number(event.target.value))} />
-            </label>
-            <label>
-              <span className="preview-panel__control-header"><span>Denoise</span><strong>{localEdits.denoise}</strong></span>
-              <input max="100" min="0" type="range" value={localEdits.denoise} onChange={(event) => updateEdit('denoise', Number(event.target.value))} />
-            </label>
-          </div>
+          <ImageAdjustmentControls
+            edits={localEdits}
+            onChange={setLocalEdits}
+          />
         </>
       ) : (
         <div className="inspector__section">

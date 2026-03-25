@@ -14,6 +14,9 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/capture': 'http://localhost:3001',
       '/api': 'http://localhost:3001',

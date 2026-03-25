@@ -39,6 +39,7 @@ function createTextSchema(db) {
       name TEXT NOT NULL,
       notes TEXT DEFAULT '',
       tags_json TEXT DEFAULT '[]',
+      review_status TEXT NOT NULL DEFAULT 'new',
       needs_attention INTEGER NOT NULL DEFAULT 0,
       image_edits_json TEXT DEFAULT '{}',
       image_path TEXT,
@@ -150,6 +151,7 @@ function ensureTextIdSchema(db, { generateUniqueId, normalizeNodeImageEdits }) {
         name TEXT NOT NULL,
         notes TEXT DEFAULT '',
         tags_json TEXT DEFAULT '[]',
+        review_status TEXT NOT NULL DEFAULT 'new',
         needs_attention INTEGER NOT NULL DEFAULT 0,
         image_edits_json TEXT DEFAULT '{}',
         image_path TEXT,
@@ -172,10 +174,10 @@ function ensureTextIdSchema(db, { generateUniqueId, normalizeNodeImageEdits }) {
     const insertNodeRow = db.prepare(`
       INSERT INTO nodes_new (
         id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json,
-        needs_attention, image_edits_json, image_path, preview_path, original_filename, added_at, created_at, updated_at
+        review_status, needs_attention, image_edits_json, image_path, preview_path, original_filename, added_at, created_at, updated_at
       ) VALUES (
         @id, @project_id, @owner_user_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json,
-        @needs_attention, @image_edits_json, @image_path, @preview_path, @original_filename, @added_at, @created_at, @updated_at
+        @review_status, @needs_attention, @image_edits_json, @image_path, @preview_path, @original_filename, @added_at, @created_at, @updated_at
       )
     `)
 
@@ -203,6 +205,7 @@ function ensureTextIdSchema(db, { generateUniqueId, normalizeNodeImageEdits }) {
         name: row.name,
         notes: row.notes || '',
         tags_json: row.tags_json || '[]',
+        review_status: Number(row.needs_attention || 0) ? 'needs_attention' : 'new',
         needs_attention: Number(row.needs_attention || 0),
         image_edits_json: JSON.stringify(normalizeNodeImageEdits(JSON.parse(row.image_edits_json || '{}'))),
         image_path: row.image_path ? rewriteUploadPathProjectFolder(row.image_path, projectIdMap.get(row.project_id)) : null,
@@ -252,6 +255,7 @@ function ensureCollapseSchemaCleanup(db) {
         name TEXT NOT NULL,
         notes TEXT DEFAULT '',
         tags_json TEXT DEFAULT '[]',
+        review_status TEXT NOT NULL DEFAULT 'new',
         needs_attention INTEGER NOT NULL DEFAULT 0,
         image_edits_json TEXT DEFAULT '{}',
         image_path TEXT,
@@ -268,10 +272,11 @@ function ensureCollapseSchemaCleanup(db) {
 
       INSERT INTO nodes_clean (
         id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json,
-        needs_attention, image_edits_json, image_path, preview_path, original_filename, added_at, created_at, updated_at
+        review_status, needs_attention, image_edits_json, image_path, preview_path, original_filename, added_at, created_at, updated_at
       )
       SELECT
         id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json,
+        CASE WHEN COALESCE(review_status, '') <> '' THEN review_status WHEN COALESCE(needs_attention, 0) = 1 THEN 'needs_attention' ELSE 'new' END,
         COALESCE(needs_attention, 0), COALESCE(image_edits_json, '{}'), image_path, preview_path, original_filename, COALESCE(added_at, created_at), created_at, updated_at
       FROM nodes;
 
@@ -300,6 +305,22 @@ function ensureNodeNeedsAttentionSchema(db) {
   if (!nodeColumns.some((column) => column.name === 'needs_attention')) {
     db.exec(`ALTER TABLE nodes ADD COLUMN needs_attention INTEGER NOT NULL DEFAULT 0`)
   }
+}
+
+function ensureNodeReviewStatusSchema(db) {
+  const nodeColumns = db.prepare(`PRAGMA table_info(nodes)`).all()
+  if (!nodeColumns.some((column) => column.name === 'review_status')) {
+    db.exec(`ALTER TABLE nodes ADD COLUMN review_status TEXT NOT NULL DEFAULT 'new'`)
+  }
+  db.exec(`
+    UPDATE nodes
+    SET review_status = CASE
+      WHEN COALESCE(review_status, '') <> '' THEN review_status
+      WHEN COALESCE(needs_attention, 0) = 1 THEN 'needs_attention'
+      ELSE 'new'
+    END
+    WHERE review_status IS NULL OR TRIM(review_status) = ''
+  `)
 }
 
 function ensureNodeAddedAtSchema(db) {
@@ -463,6 +484,7 @@ export function initializeDatabase({ dbPath, generateUniqueId, normalizeNodeImag
   ensureCollapseSchemaCleanup(db)
   ensureNodeImageEditSchema(db)
   ensureNodeNeedsAttentionSchema(db)
+  ensureNodeReviewStatusSchema(db)
   ensureNodeAddedAtSchema(db)
   ensureAuthSchema(db)
   ensureNodeOwnerSchema(db)

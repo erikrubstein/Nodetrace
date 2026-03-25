@@ -7,6 +7,7 @@ import {
 
 export default function TopBar({
   busy,
+  desktopWindowMaximized = false,
   fileInputRef,
   fitCanvasToView,
   focusPathMode,
@@ -52,11 +53,15 @@ export default function TopBar({
   tree,
   undo,
   uploadFiles,
+  onDesktopClose,
+  onDesktopMinimize,
+  onDesktopToggleMaximize,
+  showDesktopControls = false,
   style,
 }) {
   return (
-    <header className="topbar" style={style}>
-      <div className="topbar__left">
+    <header className={`topbar ${showDesktopControls ? 'topbar--desktop' : ''}`} style={style}>
+      <div className="topbar__left topbar__no-drag">
         <img alt="Nodetrace" className="topbar__logo" src="/nodetrace.svg" />
         <div className="menu-wrap">
           <button
@@ -418,7 +423,7 @@ export default function TopBar({
         />
       </div>
 
-      <div className="topbar__right">
+      <div className="topbar__right topbar__no-drag">
         {presenceUsers?.length ? (
           <div className="topbar__presence-list">
             {presenceUsers.map((user) => (
@@ -466,6 +471,34 @@ export default function TopBar({
         >
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </IconButton>
+        {showDesktopControls ? (
+          <div className="desktop-window-controls">
+            <button
+              aria-label="Minimize window"
+              className="desktop-window-controls__button"
+              onClick={() => void onDesktopMinimize?.()}
+              type="button"
+            >
+              <i aria-hidden="true" className="fa-solid fa-minus" />
+            </button>
+            <button
+              aria-label={desktopWindowMaximized ? 'Restore window' : 'Maximize window'}
+              className="desktop-window-controls__button"
+              onClick={() => void onDesktopToggleMaximize?.()}
+              type="button"
+            >
+              <i aria-hidden="true" className={`fa-regular ${desktopWindowMaximized ? 'fa-clone' : 'fa-square'}`} />
+            </button>
+            <button
+              aria-label="Close window"
+              className="desktop-window-controls__button desktop-window-controls__button--close"
+              onClick={() => void onDesktopClose?.()}
+              type="button"
+            >
+              <i aria-hidden="true" className="fa-solid fa-xmark" />
+            </button>
+          </div>
+        ) : null}
       </div>
     </header>
   )

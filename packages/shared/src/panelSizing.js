@@ -1,0 +1,33 @@
+export const DEFAULT_PANEL_MIN_WIDTH = 320
+
+export const panelMinWidths = {
+  preview: 420,
+  camera: 420,
+  search: 340,
+  templates: 520,
+  inspector: 320,
+  fields: 420,
+  settings: 360,
+  collaborators: 360,
+  account: 340,
+}
+
+export const panelInitialWidths = {
+  preview: 760,
+  camera: 720,
+  search: 420,
+  templates: 760,
+  inspector: 420,
+  fields: 620,
+  settings: 460,
+  collaborators: 460,
+  account: 420,
+}
+
+export function getPanelMinWidth(panelId) {
+  return panelMinWidths[panelId] || DEFAULT_PANEL_MIN_WIDTH
+}
+
+export function getPanelInitialWidth(panelId) {
+  return Math.max(getPanelMinWidth(panelId), panelInitialWidths[panelId] || 480)
+}

@@ -87,6 +87,14 @@ const defaultNodeImageEdits = {
   rotationTurns: 0,
 }
 
+function normalizeNodeReviewStatus(input) {
+  const value = String(input || '').trim().toLowerCase()
+  if (value === 'needs_attention' || value === 'reviewed') {
+    return value
+  }
+  return 'new'
+}
+
 function generateShortId() {
   let value = ID_FIRST_CHARS[Math.floor(Math.random() * ID_FIRST_CHARS.length)]
   for (let index = 1; index < 5; index += 1) {
@@ -255,10 +263,10 @@ const insertProject = db.prepare(`
 const insertNode = db.prepare(`
   INSERT INTO nodes (
     id, project_id, owner_user_id, parent_id, variant_of_id, type, name, notes, tags_json, image_path, preview_path,
-    needs_attention, image_edits_json, original_filename, added_at, created_at, updated_at
+    review_status, needs_attention, image_edits_json, original_filename, added_at, created_at, updated_at
   ) VALUES (
     @id, @project_id, @owner_user_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json, @image_path, @preview_path,
-    @needs_attention, @image_edits_json, @original_filename, @added_at, @created_at, @updated_at
+    @review_status, @needs_attention, @image_edits_json, @original_filename, @added_at, @created_at, @updated_at
   )
 `)
 
@@ -647,6 +655,7 @@ const updateNodeStmt = db.prepare(`
   SET name = @name,
       notes = @notes,
       tags_json = @tags_json,
+      review_status = @review_status,
       needs_attention = @needs_attention,
       image_edits_json = @image_edits_json,
       updated_at = @updated_at
@@ -766,7 +775,8 @@ const createNode = db.transaction((payload) => {
     created_at: now,
     updated_at: now,
     tags_json: JSON.stringify(payload.tags),
-    needs_attention: payload.needs_attention ? 1 : 0,
+    review_status: normalizeNodeReviewStatus(payload.review_status),
+    needs_attention: normalizeNodeReviewStatus(payload.review_status) === 'needs_attention' ? 1 : 0,
     image_edits_json: JSON.stringify(normalizeNodeImageEdits(payload.image_edits)),
     variant_of_id: payload.variant_of_id ?? null,
   })
@@ -775,14 +785,16 @@ const createNode = db.transaction((payload) => {
   return nodeId
 })
 
-const updateNode = db.transaction(({ id, project_id, name, notes, tags, needs_attention, image_edits }) => {
+const updateNode = db.transaction(({ id, project_id, name, notes, tags, review_status, image_edits }) => {
   const now = new Date().toISOString()
+  const normalizedReviewStatus = normalizeNodeReviewStatus(review_status)
   updateNodeStmt.run({
     id,
     name,
     notes,
     tags_json: JSON.stringify(tags),
-    needs_attention: needs_attention ? 1 : 0,
+    review_status: normalizedReviewStatus,
+    needs_attention: normalizedReviewStatus === 'needs_attention' ? 1 : 0,
     image_edits_json: JSON.stringify(normalizeNodeImageEdits(image_edits)),
     updated_at: now,
   })
@@ -1855,7 +1867,8 @@ function serializeNode(row, _collapsedMap = null, identification = null) {
     created_at: row.created_at,
     updated_at: row.updated_at,
     tags: JSON.parse(row.tags_json || '[]'),
-    needsAttention: Boolean(row.needs_attention),
+    reviewStatus: normalizeNodeReviewStatus(row.review_status || (row.needs_attention ? 'needs_attention' : 'new')),
+    needsAttention: normalizeNodeReviewStatus(row.review_status || (row.needs_attention ? 'needs_attention' : 'new')) === 'needs_attention',
     imageEdits: normalizeNodeImageEdits(JSON.parse(row.image_edits_json || '{}')),
     collapsed: false,
     isVariant: row.variant_of_id != null,
@@ -2928,6 +2941,8 @@ const serverContext = {
   clearAuthCookie,
   clearNodeIdentificationCreatorByUserStmt,
   clearNodeIdentificationReviewerByUserStmt,
+  cleanupDesktopSessions,
+  cleanupMobileConnections,
   countOwnedProjectsByUserStmt,
   countUsers,
   createNode,

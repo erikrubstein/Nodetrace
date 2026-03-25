@@ -45,6 +45,7 @@ export function registerNodeRoutes(app, ctx) {
       const hasName = Object.prototype.hasOwnProperty.call(req.body || {}, 'name')
       const hasNotes = Object.prototype.hasOwnProperty.call(req.body || {}, 'notes')
       const hasTags = Object.prototype.hasOwnProperty.call(req.body || {}, 'tags')
+      const hasReviewStatus = Object.prototype.hasOwnProperty.call(req.body || {}, 'reviewStatus')
       const hasNeedsAttention = Object.prototype.hasOwnProperty.call(req.body || {}, 'needsAttention')
       const hasImageEdits = Object.prototype.hasOwnProperty.call(req.body || {}, 'imageEdits')
       const requestedName = hasName ? String(req.body.name || '').trim() : node.name
@@ -59,7 +60,11 @@ export function registerNodeRoutes(app, ctx) {
         name: requestedName || node.name,
         notes: hasNotes ? String(req.body.notes || '').trim() : (node.notes || ''),
         tags: hasTags ? parseTags(req.body.tags) : JSON.parse(node.tags_json || '[]'),
-        needs_attention: hasNeedsAttention ? Boolean(req.body.needsAttention) : Boolean(node.needs_attention),
+        review_status: hasReviewStatus
+          ? req.body.reviewStatus
+          : hasNeedsAttention
+            ? (req.body.needsAttention ? 'needs_attention' : 'new')
+            : node.review_status,
         image_edits: hasImageEdits ? req.body.imageEdits : JSON.parse(node.image_edits_json || '{}'),
       })
 

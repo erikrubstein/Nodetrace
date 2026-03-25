@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getContainedRect } from '../lib/image'
-import { MIN_INSPECTOR_WIDTH, NODE_HEIGHT, NODE_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/constants'
+import { NODE_HEIGHT, NODE_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/constants'
 import { debugLog } from '../lib/debug'
 
 export default function useWorkspaceInteractions({
@@ -22,8 +22,10 @@ export default function useWorkspaceInteractions({
   setDragPreview,
   setEffectiveSelection,
   setLeftSidebarWidth,
+  leftSidebarMinWidth,
   setPreviewTransform,
   setRightSidebarWidth,
+  rightSidebarMinWidth,
   setSelectedCameraId,
   setTransform,
   transform,
@@ -253,7 +255,12 @@ export default function useWorkspaceInteractions({
   }
 
   function beginCameraSelection(event) {
-    if (event.button !== 0 || !cameraVisible || !cameraViewportRef.current || !cameraVideoRef.current) {
+    if (
+      event.button !== 0 ||
+      !cameraVisible ||
+      !cameraViewportRef.current ||
+      !cameraVideoRef.current
+    ) {
       return
     }
 
@@ -283,7 +290,7 @@ export default function useWorkspaceInteractions({
     event.preventDefault()
   }
 
-  const finishCameraSelection = useCallback(async (event) => {
+  const finishCameraSelection = useCallback((event) => {
     const selectState = cameraSelectRef.current
     if (!selectState || selectState.pointerId !== event.pointerId) {
       return
@@ -293,51 +300,15 @@ export default function useWorkspaceInteractions({
     cameraViewportRef.current?.releasePointerCapture(event.pointerId)
     const selection = cameraSelectionRef.current
     cameraSelectionRef.current = null
-    setCameraSelection(null)
-
     if (!selection || selection.width < 12 || selection.height < 12) {
+      setCameraSelection(null)
       return
     }
 
-    if (!selectedNode || selectedNode.isVariant) {
-      setCameraNotice('Select a non-variant node before capturing.')
-      return
-    }
+    setCameraSelection(selection)
+  }, [setCameraSelection])
 
-    const video = cameraVideoRef.current
-    if (!video?.videoWidth || !video?.videoHeight) {
-      setCameraNotice('Camera frame is not ready yet.')
-      return
-    }
-
-    const videoRect = selectState.videoRect
-    const cropX = Math.round(((selection.x - videoRect.x) / videoRect.width) * video.videoWidth)
-    const cropY = Math.round(((selection.y - videoRect.y) / videoRect.height) * video.videoHeight)
-    const cropWidth = Math.round((selection.width / videoRect.width) * video.videoWidth)
-    const cropHeight = Math.round((selection.height / videoRect.height) * video.videoHeight)
-
-    if (cropWidth < 4 || cropHeight < 4) {
-      return
-    }
-
-    const canvas = document.createElement('canvas')
-    canvas.width = cropWidth
-    canvas.height = cropHeight
-    const context = canvas.getContext('2d')
-    context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9))
-    if (!blob) {
-      setCameraNotice('Unable to capture the selected region.')
-      return
-    }
-
-    const file = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' })
-    setCameraNotice('Uploading selection...')
-    await uploadFiles([file], selectedNode.id, 'child')
-    setCameraNotice('Selection added.')
-  }, [selectedNode, setCameraNotice, setCameraSelection, uploadFiles])
-
-  async function captureFullCameraFrame(mode = 'child') {
+  async function captureFullCameraFrame(mode = 'child', options = {}) {
     const video = cameraVideoRef.current
     if (!video?.videoWidth || !video?.videoHeight) {
       setCameraNotice('Camera frame is not ready yet.')
@@ -367,7 +338,7 @@ export default function useWorkspaceInteractions({
 
     const file = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' })
     setCameraNotice(mode === 'variant' ? 'Uploading variant frame...' : 'Uploading full frame...')
-    await uploadFiles([file], selectedNode.id, mode)
+    await uploadFiles([file], selectedNode.id, mode, options)
     setCameraNotice(mode === 'variant' ? 'Variant frame added.' : 'Full frame added.')
   }
 
@@ -457,12 +428,12 @@ export default function useWorkspaceInteractions({
       }
 
       if (resizeRef.current.target === 'left') {
-        const nextWidth = Math.max(MIN_INSPECTOR_WIDTH, event.clientX - SIDEBAR_RAIL_WIDTH)
+        const nextWidth = Math.max(leftSidebarMinWidth, event.clientX - SIDEBAR_RAIL_WIDTH)
         setLeftSidebarWidth(nextWidth)
         return
       }
 
-      const nextWidth = Math.max(MIN_INSPECTOR_WIDTH, window.innerWidth - event.clientX - SIDEBAR_RAIL_WIDTH)
+      const nextWidth = Math.max(rightSidebarMinWidth, window.innerWidth - event.clientX - SIDEBAR_RAIL_WIDTH)
       setRightSidebarWidth(nextWidth)
     }
 
@@ -523,7 +494,7 @@ export default function useWorkspaceInteractions({
 
       previewPanRef.current = null
       if (cameraSelectRef.current && cameraSelectRef.current.pointerId === event.pointerId) {
-        void finishCameraSelection(event)
+        finishCameraSelection(event)
       }
       resizeRef.current = null
       document.body.classList.remove('is-resizing')
@@ -549,8 +520,10 @@ export default function useWorkspaceInteractions({
     setDragHoverNodeId,
     setDragPreview,
     setLeftSidebarWidth,
+    leftSidebarMinWidth,
     setPreviewTransform,
     setRightSidebarWidth,
+    rightSidebarMinWidth,
     transform.scale,
     transform.x,
     transform.y,
@@ -628,6 +601,38 @@ export default function useWorkspaceInteractions({
 
   useEffect(() => {
     let cancelled = false
+    let deviceChangeHandler = null
+
+    async function refreshCameraDevices(preferredDeviceId = selectedCameraId) {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        return
+      }
+
+      const refreshedDevices = await navigator.mediaDevices.enumerateDevices()
+      if (cancelled) {
+        return
+      }
+
+      const videoInputs = refreshedDevices.filter((device) => device.kind === 'videoinput')
+      setCameraDevices(videoInputs)
+
+      if (!videoInputs.length) {
+        if (selectedCameraId) {
+          setSelectedCameraId('')
+        }
+        return
+      }
+
+      if (!preferredDeviceId) {
+        setSelectedCameraId(videoInputs[0]?.deviceId || '')
+        return
+      }
+
+      const selectedDeviceStillExists = videoInputs.some((device) => device.deviceId === preferredDeviceId)
+      if (!selectedDeviceStillExists) {
+        setSelectedCameraId(videoInputs[0]?.deviceId || '')
+      }
+    }
 
     async function startCamera() {
       if (!cameraVisible) {
@@ -664,18 +669,12 @@ export default function useWorkspaceInteractions({
           await cameraVideoRef.current.play().catch(() => {})
         }
 
-        const refreshedDevices = await navigator.mediaDevices.enumerateDevices()
+        const activeTrack = stream.getVideoTracks()[0]
+        const activeDeviceId = activeTrack?.getSettings?.().deviceId || selectedCameraId || ''
+        await refreshCameraDevices(activeDeviceId)
+
         if (!cancelled) {
-          const videoInputs = refreshedDevices.filter((device) => device.kind === 'videoinput')
-          setCameraDevices(videoInputs)
-          if (!selectedCameraId) {
-            const activeTrack = stream.getVideoTracks()[0]
-            const activeDeviceId = activeTrack?.getSettings?.().deviceId || videoInputs[0]?.deviceId || ''
-            if (activeDeviceId) {
-              setSelectedCameraId(activeDeviceId)
-            }
-          }
-          setCameraNotice('Drag over the camera view to capture a crop.')
+          setCameraNotice('Camera ready.')
         }
       } catch (cameraError) {
         if (!cancelled) {
@@ -686,8 +685,18 @@ export default function useWorkspaceInteractions({
 
     void startCamera()
 
+    if (cameraVisible && navigator.mediaDevices?.addEventListener) {
+      deviceChangeHandler = () => {
+        void refreshCameraDevices()
+      }
+      navigator.mediaDevices.addEventListener('devicechange', deviceChangeHandler)
+    }
+
     return () => {
       cancelled = true
+      if (deviceChangeHandler && navigator.mediaDevices?.removeEventListener) {
+        navigator.mediaDevices.removeEventListener('devicechange', deviceChangeHandler)
+      }
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getTracks().forEach((track) => track.stop())
         cameraStreamRef.current = null

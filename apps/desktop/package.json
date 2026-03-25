@@ -2,9 +2,10 @@
   "name": "nodetrace-desktop",
   "private": true,
   "type": "module",
+  "main": "launcher.cjs",
   "scripts": {
-    "dev": "concurrently \"npm run dev --workspace nodetrace-renderer\" \"electron main.js --dev-url=http://127.0.0.1:5173\"",
-    "start": "electron main.js",
+    "dev": "concurrently \"npm run dev --workspace nodetrace-renderer\" \"electron ../../apps/desktop --dev-url=http://127.0.0.1:5173\"",
+    "start": "electron ../../apps/desktop",
     "lint": "eslint \"**/*.js\""
   }
 }

@@ -295,26 +295,26 @@ select {
 
 .desktop-window-controls {
   display: flex;
-  align-items: stretch;
-  gap: 0;
-  margin-left: 4px;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  padding-right: 8px;
 }
 
 .desktop-window-controls__button {
-  width: 38px;
-  height: var(--topbar-height);
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   padding: 0;
   border: none;
-  border-left: 1px solid var(--border);
-  border-radius: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--muted);
 }
 
 .desktop-window-controls__button:hover:not(:disabled) {
   background: var(--menu-active);
+  color: var(--text);
 }
 
 .desktop-window-controls__button--close:hover:not(:disabled) {
@@ -323,12 +323,12 @@ select {
 }
 
 .desktop-window-controls__button--close {
-  width: 42px;
-  padding-right: 4px;
+  padding-right: 0;
 }
 
 .panel-window-shell__controls .desktop-window-controls__button {
-  height: 40px;
+  width: 24px;
+  height: 24px;
 }
 
 .topbar__presence-list {
@@ -1156,6 +1156,21 @@ select {
   color: #171717;
 }
 
+.node-review-status--new {
+  background: var(--control-bg);
+  color: var(--text);
+}
+
+.node-review-status--needs_attention {
+  background: #caa43a;
+  color: #171717;
+}
+
+.node-review-status--reviewed {
+  background: #4f9953;
+  color: #ffffff;
+}
+
 .identification-fields {
   display: flex;
   flex-direction: column;
@@ -1222,23 +1237,24 @@ select {
   padding: 0;
   border: 0;
   border-radius: 4px;
-  background: #c84f4f;
-  color: #ffffff;
+  background: var(--control-bg);
+  color: var(--muted);
   flex-shrink: 0;
 }
 
 .identification-field__review-toggle:hover:not(:disabled) {
-  background: #b94747;
+  background: var(--control-hover);
+  color: var(--text);
 }
 
 .identification-field__review-toggle.is-reviewed,
 .identification-field__review-toggle.is-reviewed:hover:not(:disabled) {
-  background: var(--control-bg);
-  color: var(--text);
+  background: #4f9953;
+  color: #ffffff;
 }
 
 .identification-field__review-toggle.is-reviewed:hover:not(:disabled) {
-  background: var(--control-hover);
+  background: #4a8e4d;
 }
 
 .identification-field__review-spacer {
@@ -1393,10 +1409,14 @@ select {
   user-select: none;
   background: var(--surface);
   border-radius: 6px;
-  cursor: crosshair;
+  cursor: default;
   display: flex;
   align-items: flex-start;
   justify-content: center;
+}
+
+.camera-viewport--crop {
+  cursor: crosshair;
 }
 
 .camera-viewport.disabled {
@@ -1479,6 +1499,89 @@ select {
   gap: 6px;
 }
 
+.tag-input {
+  position: relative;
+}
+
+.tag-input__field {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--control-bg);
+}
+
+.tag-input__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1;
+}
+
+.tag-input__chip-remove {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.tag-input__chip-remove:hover:not(:disabled) {
+  background: var(--menu-active);
+  color: var(--text);
+}
+
+.tag-input__input {
+  min-width: 96px;
+  flex: 1 1 120px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tag-input__input:focus {
+  outline: none;
+}
+
+.tag-input__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px var(--elevation);
+}
+
+.tag-input__menu-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+}
+
+.tag-input__menu-item--active,
+.tag-input__menu-item--active:hover:not(:disabled) {
+  background: var(--menu-active);
+}
+
 .preview-panel__controls label {
   gap: 2px;
 }
@@ -1507,6 +1610,12 @@ select {
   border: none;
   background: var(--control-bg);
   color: var(--control-text);
+}
+
+select:focus,
+select:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 input[type='range'] {

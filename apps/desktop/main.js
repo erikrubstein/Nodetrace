@@ -1,29 +1,49 @@
 import path from 'node:path'
 import process from 'node:process'
+import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, ipcMain } from 'electron'
+import { getPanelInitialWidth, getPanelMinWidth } from '../../packages/shared/src/panelSizing.js'
 
 const desktopDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRootDir = path.resolve(desktopDir, '../..')
 const serverEntryPath = path.join(repoRootDir, 'apps/server/index.js')
-const preloadPath = path.join(desktopDir, 'preload.js')
+const preloadPath = path.join(desktopDir, 'preload.cjs')
+const desktopLogPath = path.join(repoRootDir, 'data', 'tmp', 'desktop.log')
+const appIconPath = path.join(repoRootDir, 'apps', 'renderer', 'public', 'nodetrace.svg')
 const desktopHost = '127.0.0.1'
 const desktopPort = Number(process.env.PORT || 3001)
 const desktopBaseUrl = `http://${desktopHost}:${desktopPort}`
 const rendererDevUrl = process.argv.find((arg) => arg.startsWith('--dev-url='))?.slice('--dev-url='.length) || ''
+const serverNodeExecPath = process.env.npm_node_execpath || process.env.NODE || 'node'
 
 let serverProcess = null
+let mainWindow = null
 const panelWindows = new Map()
+
+function logDesktop(message) {
+  const line = `[${new Date().toISOString()}] ${message}\n`
+  try {
+    fs.mkdirSync(path.dirname(desktopLogPath), { recursive: true })
+    fs.appendFileSync(desktopLogPath, line)
+  } catch {
+    // Ignore log write failures and continue with console output.
+  }
+  console.log(message)
+}
 
 function buildWindowOptions(overrides = {}) {
   return {
+    show: false,
+    frame: false,
     width: 1600,
     height: 980,
     minWidth: 1080,
     minHeight: 720,
     backgroundColor: '#1f1f1f',
+    icon: appIconPath,
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath,
@@ -41,6 +61,27 @@ function getRendererUrl(windowPath = '') {
   return `${desktopBaseUrl}${windowPath}`
 }
 
+function attachWindowStateListeners(window, label) {
+  const emitWindowState = () => {
+    window.webContents.send('desktop:window-state', { maximized: window.isMaximized() })
+  }
+  window.once('ready-to-show', () => {
+    logDesktop(`${label} ready-to-show`)
+    window.show()
+    window.focus()
+    emitWindowState()
+  })
+  window.on('maximize', emitWindowState)
+  window.on('unmaximize', emitWindowState)
+  window.webContents.on('did-finish-load', () => {
+    logDesktop(`${label} finished load`)
+    emitWindowState()
+  })
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    logDesktop(`${label} failed load: ${errorCode} ${errorDescription}`)
+  })
+}
+
 function pipeChildLogs(child) {
   child.stdout?.on('data', (chunk) => {
     process.stdout.write(String(chunk))
@@ -55,7 +96,7 @@ function ensureServerProcess() {
     return
   }
 
-  serverProcess = spawn(process.execPath, [serverEntryPath], {
+  serverProcess = spawn(serverNodeExecPath, [serverEntryPath], {
     cwd: repoRootDir,
     env: {
       ...process.env,
@@ -67,8 +108,10 @@ function ensureServerProcess() {
 
   pipeChildLogs(serverProcess)
   serverProcess.on('exit', () => {
+    logDesktop('Server child process exited')
     serverProcess = null
   })
+  logDesktop(`Spawned server process with ${serverNodeExecPath} on ${desktopBaseUrl}`)
 }
 
 async function waitForServerReady() {
@@ -91,13 +134,20 @@ async function loadWindow(window, windowPath = '') {
   if (!rendererDevUrl) {
     await waitForServerReady()
   }
+  logDesktop(`Desktop loading ${getRendererUrl(windowPath)}`)
   await window.loadURL(getRendererUrl(windowPath))
 }
 
 function createMainWindow() {
-  const mainWindow = new BrowserWindow(buildWindowOptions({ title: 'Nodetrace' }))
+  mainWindow = new BrowserWindow(buildWindowOptions({ title: 'Nodetrace' }))
+  logDesktop('Created main BrowserWindow')
+  attachWindowStateListeners(mainWindow, 'Main window')
+  mainWindow.on('closed', () => {
+    logDesktop('Main window closed')
+    mainWindow = null
+  })
   loadWindow(mainWindow).catch((error) => {
-    console.error(error)
+    logDesktop(`Main window load error: ${error.message}`)
     mainWindow.loadURL(`data:text/plain,${encodeURIComponent(error.message)}`).catch(() => {})
   })
   return mainWindow
@@ -118,11 +168,14 @@ function openPanelWindow(options = {}) {
   const panelWindow = new BrowserWindow(
     buildWindowOptions({
       title: `Nodetrace - ${panelId}`,
-      width: 960,
+      width: getPanelInitialWidth(panelId),
       height: 760,
+      minWidth: getPanelMinWidth(panelId),
+      minHeight: 360,
     }),
   )
   panelWindows.set(panelId, panelWindow)
+  attachWindowStateListeners(panelWindow, `Panel window ${panelId}`)
   panelWindow.on('closed', () => {
     panelWindows.delete(panelId)
   })
@@ -149,10 +202,37 @@ function stopServerProcess() {
     return
   }
   serverProcess.kill()
+  logDesktop('Stopped server child process')
   serverProcess = null
 }
 
+function getEventWindow(event) {
+  return BrowserWindow.fromWebContents(event.sender)
+}
+
 ipcMain.handle('desktop:open-window', (_event, options) => openPanelWindow(options))
+ipcMain.handle('desktop:close-window', (event) => {
+  getEventWindow(event)?.close()
+})
+ipcMain.handle('desktop:minimize-window', (event) => {
+  getEventWindow(event)?.minimize()
+})
+ipcMain.handle('desktop:toggle-maximize-window', (event) => {
+  const window = getEventWindow(event)
+  if (!window) {
+    return { maximized: false }
+  }
+  if (window.isMaximized()) {
+    window.unmaximize()
+  } else {
+    window.maximize()
+  }
+  return { maximized: window.isMaximized() }
+})
+ipcMain.handle('desktop:get-window-state', (event) => {
+  const window = getEventWindow(event)
+  return { maximized: Boolean(window?.isMaximized()) }
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -171,5 +251,6 @@ app.on('activate', () => {
 })
 
 await app.whenReady()
+logDesktop(`Desktop shell starting${rendererDevUrl ? ` with renderer ${rendererDevUrl}` : ''}`)
 ensureServerProcess()
 createMainWindow()
