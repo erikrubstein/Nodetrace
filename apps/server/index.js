@@ -95,6 +95,10 @@ function normalizeNodeReviewStatus(input) {
   return 'new'
 }
 
+function nodeHasLegacyMedia(node) {
+  return Boolean(node?.image_path || node?.preview_path || node?.original_filename)
+}
+
 function generateShortId() {
   let value = ID_FIRST_CHARS[Math.floor(Math.random() * ID_FIRST_CHARS.length)]
   for (let index = 1; index < 5; index += 1) {
@@ -268,6 +272,76 @@ const insertNode = db.prepare(`
     @id, @project_id, @owner_user_id, @parent_id, @variant_of_id, @type, @name, @notes, @tags_json, @image_path, @preview_path,
     @review_status, @needs_attention, @image_edits_json, @original_filename, @added_at, @created_at, @updated_at
   )
+`)
+const getNodeMediaByIdStmt = db.prepare(`SELECT * FROM node_media WHERE id = ?`)
+const getNodeMediaByLegacySourceStmt = db.prepare(`
+  SELECT *
+  FROM node_media
+  WHERE legacy_source_node_id = ?
+`)
+const listNodeMediaByNodeStmt = db.prepare(`
+  SELECT *
+  FROM node_media
+  WHERE node_id = ?
+  ORDER BY is_primary DESC, sort_order ASC, created_at ASC, id ASC
+`)
+const insertNodeMediaMirrorStmt = db.prepare(`
+  INSERT INTO node_media (
+    id,
+    project_id,
+    node_id,
+    legacy_source_node_id,
+    is_primary,
+    sort_order,
+    image_edits_json,
+    image_path,
+    preview_path,
+    original_filename,
+    created_at,
+    updated_at
+  ) VALUES (
+    @id,
+    @project_id,
+    @node_id,
+    @legacy_source_node_id,
+    @is_primary,
+    @sort_order,
+    @image_edits_json,
+    @image_path,
+    @preview_path,
+    @original_filename,
+    @created_at,
+    @updated_at
+  )
+`)
+const updateNodeMediaMirrorStmt = db.prepare(`
+  UPDATE node_media
+  SET project_id = @project_id,
+      node_id = @node_id,
+      is_primary = @is_primary,
+      sort_order = @sort_order,
+      image_edits_json = @image_edits_json,
+      image_path = @image_path,
+      preview_path = @preview_path,
+      original_filename = @original_filename,
+      updated_at = @updated_at
+  WHERE id = @id
+`)
+const updateNodeMediaPlacementStmt = db.prepare(`
+  UPDATE node_media
+  SET node_id = @node_id,
+      is_primary = @is_primary,
+      sort_order = @sort_order,
+      updated_at = @updated_at
+  WHERE id = @id
+`)
+const deleteNodeMediaByLegacySourceStmt = db.prepare(`
+  DELETE FROM node_media
+  WHERE legacy_source_node_id = ?
+`)
+const deleteNodeMediaByProjectStmt = db.prepare(`
+  DELETE FROM node_media
+  WHERE project_id = ?
 `)
 
 const getProject = db.prepare(`SELECT * FROM projects WHERE id = ?`)
@@ -589,6 +663,12 @@ const getNodesByProject = db.prepare(`
   LEFT JOIN users owner ON owner.id = n.owner_user_id
   WHERE n.project_id = ?
 `)
+const listNodeMediaByProjectStmt = db.prepare(`
+  SELECT *
+  FROM node_media
+  WHERE project_id = ?
+  ORDER BY node_id ASC, is_primary DESC, sort_order ASC, created_at ASC, id ASC
+`)
 const hasChildNodeStmt = db.prepare(`
   SELECT 1
   FROM nodes
@@ -674,6 +754,81 @@ const listNodeCollapsePrefsByNodeStmt = db.prepare(`
   FROM user_node_collapse_preferences
   WHERE node_id = ?
 `)
+
+function resequenceNodeMedia(nodeId) {
+  if (!nodeId) {
+    return
+  }
+  const node = getNode.get(nodeId)
+  if (!node) {
+    return
+  }
+
+  let nextVariantSortOrder = 1
+  for (const media of listNodeMediaByNodeStmt.all(nodeId)) {
+    const isPrimary = media.legacy_source_node_id === nodeId ? 1 : 0
+    const sortOrder = isPrimary ? 0 : nextVariantSortOrder
+    if (!isPrimary) {
+      nextVariantSortOrder += 1
+    }
+    if (
+      media.node_id !== nodeId ||
+      Number(media.is_primary || 0) !== isPrimary ||
+      Number(media.sort_order || 0) !== sortOrder
+    ) {
+      updateNodeMediaPlacementStmt.run({
+        id: media.id,
+        node_id: nodeId,
+        is_primary: isPrimary,
+        sort_order: sortOrder,
+        updated_at: new Date().toISOString(),
+      })
+    }
+  }
+}
+
+function syncLegacyNodeMedia(nodeId) {
+  // Temporary dual-write mirror while nodes still own legacy image/variant fields.
+  const node = getNode.get(nodeId)
+  const existing = getNodeMediaByLegacySourceStmt.get(nodeId)
+  const previousOwnerNodeId = existing?.node_id || null
+
+  if (!node || !nodeHasLegacyMedia(node)) {
+    if (existing) {
+      deleteNodeMediaByLegacySourceStmt.run(nodeId)
+      resequenceNodeMedia(previousOwnerNodeId)
+    }
+    return
+  }
+
+  const ownerNodeId = node.variant_of_id || node.id
+  const now = new Date().toISOString()
+  const payload = {
+    id: existing?.id || null,
+    project_id: node.project_id,
+    node_id: ownerNodeId,
+    legacy_source_node_id: node.id,
+    is_primary: node.variant_of_id == null ? 1 : 0,
+    sort_order: node.variant_of_id == null ? 0 : Number(existing?.sort_order || 0),
+    image_edits_json: JSON.stringify(normalizeNodeImageEdits(JSON.parse(node.image_edits_json || '{}'))),
+    image_path: node.image_path || null,
+    preview_path: node.preview_path || null,
+    original_filename: node.original_filename || null,
+    created_at: existing?.created_at || node.added_at || node.created_at || now,
+    updated_at: node.updated_at || now,
+  }
+  if (existing) {
+    updateNodeMediaMirrorStmt.run(payload)
+  } else {
+    payload.id = generateUniqueId((candidate) => Boolean(getNodeMediaByIdStmt.get(candidate)))
+    insertNodeMediaMirrorStmt.run(payload)
+  }
+
+  if (previousOwnerNodeId && previousOwnerNodeId !== ownerNodeId) {
+    resequenceNodeMedia(previousOwnerNodeId)
+  }
+  resequenceNodeMedia(ownerNodeId)
+}
 
 const createProjectWithRoot = db.transaction(({ name, description, owner_user_id }) => {
   const now = new Date().toISOString()
@@ -780,6 +935,7 @@ const createNode = db.transaction((payload) => {
     image_edits_json: JSON.stringify(normalizeNodeImageEdits(payload.image_edits)),
     variant_of_id: payload.variant_of_id ?? null,
   })
+  syncLegacyNodeMedia(nodeId)
 
   updateProjectTimestamp.run(now, payload.project_id)
   return nodeId
@@ -798,6 +954,7 @@ const updateNode = db.transaction(({ id, project_id, name, notes, tags, review_s
     image_edits_json: JSON.stringify(normalizeNodeImageEdits(image_edits)),
     updated_at: now,
   })
+  syncLegacyNodeMedia(id)
   updateProjectTimestamp.run(now, project_id)
 })
 
@@ -872,6 +1029,7 @@ const moveNode = db.transaction(({ id, project_id, parent_id, variant_of_id }) =
     variant_of_id,
     updated_at: now,
   })
+  syncLegacyNodeMedia(id)
   updateProjectTimestamp.run(now, project_id)
 })
 
@@ -928,6 +1086,12 @@ const promoteVariantToMain = db.transaction(({ variantId, projectId }) => {
       variant_of_id: variantNode.id,
       updated_at: now,
     })
+  }
+
+  syncLegacyNodeMedia(variantNode.id)
+  syncLegacyNodeMedia(currentAnchor.id)
+  for (const siblingVariantId of siblingVariants) {
+    syncLegacyNodeMedia(siblingVariantId)
   }
 
   deleteNodeCollapsePrefsByNodeStmt.run(currentAnchor.id)
@@ -1019,6 +1183,7 @@ const deleteNodeRecursive = db.transaction((nodeId, projectId) => {
     deleteNodeCollapsePrefsByNodeStmt.run(current.id)
     deleteNodeIdentificationFieldValuesByNodeStmt.run(current.id)
     deleteNodeIdentificationStmt.run(current.id)
+    deleteNodeMediaByLegacySourceStmt.run(current.id)
     deleteNodeStmt.run(current.id)
   }
 
@@ -1045,6 +1210,7 @@ const deleteProjectRecursive = db.transaction((projectId) => {
   deleteNodeIdentificationFieldValuesByProjectStmt.run(projectId)
   deleteNodeIdentificationsByProjectStmt.run(projectId)
   deleteNodeCollapsePrefsByProjectStmt.run(projectId)
+  deleteNodeMediaByProjectStmt.run(projectId)
   deleteNodesByProjectStmt.run(projectId)
   deleteIdentificationTemplatesByProjectStmt.run(projectId)
   deleteUserProjectPreferencesByProjectStmt.run(projectId)
@@ -1077,6 +1243,7 @@ const clearProjectContents = db.transaction((projectId) => {
   deleteNodeIdentificationFieldValuesByProjectStmt.run(projectId)
   deleteNodeIdentificationsByProjectStmt.run(projectId)
   deleteNodeCollapsePrefsByProjectStmt.run(projectId)
+  deleteNodeMediaByProjectStmt.run(projectId)
   deleteNodesByProjectStmt.run(projectId)
   deleteIdentificationTemplatesByProjectStmt.run(projectId)
 
@@ -1852,7 +2019,25 @@ function serializeProject(row, userId) {
   }
 }
 
-function serializeNode(row, _collapsedMap = null, identification = null) {
+function serializeNodeMedia(row) {
+  return {
+    id: row.id,
+    nodeId: row.node_id,
+    legacySourceNodeId: row.legacy_source_node_id || null,
+    isPrimary: Boolean(row.is_primary),
+    sortOrder: Number(row.sort_order || 0),
+    originalFilename: row.original_filename || null,
+    imageEdits: normalizeNodeImageEdits(JSON.parse(row.image_edits_json || '{}')),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    imageUrl: row.image_path ? `/uploads/${row.image_path.replaceAll('\\', '/')}` : null,
+    previewUrl: row.preview_path ? `/uploads/${row.preview_path.replaceAll('\\', '/')}` : null,
+  }
+}
+
+function serializeNode(row, _collapsedMap = null, identification = null, mediaRows = []) {
+  const media = mediaRows.map(serializeNodeMedia)
+  const primaryMedia = media.find((item) => item.isPrimary) || media[0] || null
   return {
     id: row.id,
     ownerUserId: row.owner_user_id || null,
@@ -1873,9 +2058,12 @@ function serializeNode(row, _collapsedMap = null, identification = null) {
     collapsed: false,
     isVariant: row.variant_of_id != null,
     identification,
-    hasImage: row.type === 'photo' && Boolean(row.image_path),
-    imageUrl: row.image_path ? `/uploads/${row.image_path.replaceAll('\\', '/')}` : null,
-    previewUrl: row.preview_path ? `/uploads/${row.preview_path.replaceAll('\\', '/')}` : null,
+    hasImage: Boolean(primaryMedia?.imageUrl || row.image_path),
+    imageUrl: primaryMedia?.imageUrl || (row.image_path ? `/uploads/${row.image_path.replaceAll('\\', '/')}` : null),
+    previewUrl: primaryMedia?.previewUrl || (row.preview_path ? `/uploads/${row.preview_path.replaceAll('\\', '/')}` : null),
+    primaryMediaId: primaryMedia?.id || null,
+    mediaCount: media.length,
+    media,
   }
 }
 
@@ -1897,10 +2085,17 @@ function serializeNodeForUser(row, userId) {
     items.push(fieldRow)
     fieldRowsByNodeId.set(fieldRow.node_id, items)
   }
+  const mediaRowsByNodeId = new Map()
+  for (const mediaRow of listNodeMediaByProjectStmt.all(row.project_id)) {
+    const items = mediaRowsByNodeId.get(mediaRow.node_id) || []
+    items.push(mediaRow)
+    mediaRowsByNodeId.set(mediaRow.node_id, items)
+  }
   const node = serializeNode(
     row,
     null,
     buildNodeIdentification(row.id, templateRowsById, identificationRowsByNodeId, fieldRowsByNodeId),
+    mediaRowsByNodeId.get(row.id) || [],
   )
   if (row.variant_of_id != null || !hasChildNodeStmt.get(row.id)) {
     return node
@@ -1925,6 +2120,12 @@ function buildTree(project, rows, userId = null) {
     items.push(fieldRow)
     fieldRowsByNodeId.set(fieldRow.node_id, items)
   }
+  const mediaRowsByNodeId = new Map()
+  for (const mediaRow of listNodeMediaByProjectStmt.all(project.id)) {
+    const items = mediaRowsByNodeId.get(mediaRow.node_id) || []
+    items.push(mediaRow)
+    mediaRowsByNodeId.set(mediaRow.node_id, items)
+  }
   const collapsedMap = userId
     ? new Map(
         listUserNodeCollapsePrefsByProject
@@ -1937,6 +2138,7 @@ function buildTree(project, rows, userId = null) {
       row,
       collapsedMap,
       buildNodeIdentification(row.id, templateRowsById, identificationRowsByNodeId, fieldRowsByNodeId),
+      mediaRowsByNodeId.get(row.id) || [],
     ),
   )
   const byId = new Map(nodes.map((node) => [node.id, { ...node, children: [], variants: [] }]))

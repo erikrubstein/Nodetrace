@@ -53,6 +53,35 @@ function createTextSchema(db) {
       FOREIGN KEY(parent_id) REFERENCES nodes(id),
       FOREIGN KEY(variant_of_id) REFERENCES nodes(id)
     );
+
+    CREATE TABLE IF NOT EXISTS node_media (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      legacy_source_node_id TEXT,
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      image_edits_json TEXT DEFAULT '{}',
+      image_path TEXT,
+      preview_path TEXT,
+      original_filename TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id),
+      FOREIGN KEY(node_id) REFERENCES nodes(id),
+      FOREIGN KEY(legacy_source_node_id) REFERENCES nodes(id)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS node_media_legacy_source_node_id
+    ON node_media(legacy_source_node_id)
+    WHERE legacy_source_node_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS node_media_primary_per_node
+    ON node_media(node_id)
+    WHERE is_primary = 1;
+
+    CREATE INDEX IF NOT EXISTS node_media_by_node_sort
+    ON node_media(node_id, sort_order, created_at, id);
   `)
 }
 
@@ -332,6 +361,180 @@ function ensureNodeAddedAtSchema(db) {
   }
 }
 
+function ensureNodeMediaSchema(db, { generateUniqueId, normalizeNodeImageEdits }) {
+  // Compatibility layer for the node/media migration:
+  // legacy node image fields and variant nodes are mirrored into node_media first,
+  // then the renderer/backend can switch over before the legacy columns are removed.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS node_media (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      legacy_source_node_id TEXT,
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      image_edits_json TEXT DEFAULT '{}',
+      image_path TEXT,
+      preview_path TEXT,
+      original_filename TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id),
+      FOREIGN KEY(node_id) REFERENCES nodes(id),
+      FOREIGN KEY(legacy_source_node_id) REFERENCES nodes(id)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS node_media_legacy_source_node_id
+    ON node_media(legacy_source_node_id)
+    WHERE legacy_source_node_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS node_media_primary_per_node
+    ON node_media(node_id)
+    WHERE is_primary = 1;
+
+    CREATE INDEX IF NOT EXISTS node_media_by_node_sort
+    ON node_media(node_id, sort_order, created_at, id);
+  `)
+
+  const nodeColumns = db.prepare(`PRAGMA table_info(node_media)`).all()
+  if (!nodeColumns.some((column) => column.name === 'legacy_source_node_id')) {
+    db.exec(`ALTER TABLE node_media ADD COLUMN legacy_source_node_id TEXT`)
+  }
+  if (!nodeColumns.some((column) => column.name === 'is_primary')) {
+    db.exec(`ALTER TABLE node_media ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0`)
+  }
+  if (!nodeColumns.some((column) => column.name === 'sort_order')) {
+    db.exec(`ALTER TABLE node_media ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`)
+  }
+  if (!nodeColumns.some((column) => column.name === 'image_edits_json')) {
+    db.exec(`ALTER TABLE node_media ADD COLUMN image_edits_json TEXT DEFAULT '{}'`)
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS node_media_legacy_source_node_id
+    ON node_media(legacy_source_node_id)
+    WHERE legacy_source_node_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS node_media_primary_per_node
+    ON node_media(node_id)
+    WHERE is_primary = 1;
+
+    CREATE INDEX IF NOT EXISTS node_media_by_node_sort
+    ON node_media(node_id, sort_order, created_at, id);
+  `)
+
+  const nodes = db.prepare(`
+    SELECT id, project_id, variant_of_id, image_path, preview_path, original_filename, image_edits_json, added_at, created_at, updated_at
+    FROM nodes
+    ORDER BY
+      CASE WHEN variant_of_id IS NULL THEN 0 ELSE 1 END,
+      COALESCE(variant_of_id, id),
+      added_at ASC,
+      created_at ASC,
+      id ASC
+  `).all()
+  const existingRowsByLegacySourceId = new Map(
+    db.prepare(`
+      SELECT id, legacy_source_node_id
+      FROM node_media
+      WHERE legacy_source_node_id IS NOT NULL
+    `).all().map((row) => [row.legacy_source_node_id, row]),
+  )
+
+  const insertNodeMedia = db.prepare(`
+    INSERT INTO node_media (
+      id,
+      project_id,
+      node_id,
+      legacy_source_node_id,
+      is_primary,
+      sort_order,
+      image_edits_json,
+      image_path,
+      preview_path,
+      original_filename,
+      created_at,
+      updated_at
+    ) VALUES (
+      @id,
+      @project_id,
+      @node_id,
+      @legacy_source_node_id,
+      @is_primary,
+      @sort_order,
+      @image_edits_json,
+      @image_path,
+      @preview_path,
+      @original_filename,
+      @created_at,
+      @updated_at
+    )
+  `)
+  const updateNodeMedia = db.prepare(`
+    UPDATE node_media
+    SET project_id = @project_id,
+        node_id = @node_id,
+        is_primary = @is_primary,
+        sort_order = @sort_order,
+        image_edits_json = @image_edits_json,
+        image_path = @image_path,
+        preview_path = @preview_path,
+        original_filename = @original_filename,
+        updated_at = @updated_at
+    WHERE id = @id
+  `)
+  const deleteNodeMediaByLegacySource = db.prepare(`
+    DELETE FROM node_media
+    WHERE legacy_source_node_id = ?
+  `)
+  const getNodeMediaById = db.prepare(`SELECT 1 FROM node_media WHERE id = ?`)
+
+  const resequenceStateByOwner = new Map()
+  const syncNodeMedia = db.transaction(() => {
+    for (const node of nodes) {
+      const hasLegacyMedia = Boolean(node.image_path || node.preview_path || node.original_filename)
+      if (!hasLegacyMedia) {
+        deleteNodeMediaByLegacySource.run(node.id)
+        continue
+      }
+
+      const ownerNodeId = node.variant_of_id || node.id
+      const ownerKey = `${node.project_id}:${ownerNodeId}`
+      const nextSortOrder = resequenceStateByOwner.get(ownerKey) || 0
+      resequenceStateByOwner.set(ownerKey, nextSortOrder + 1)
+      const existingRow = existingRowsByLegacySourceId.get(node.id)
+
+      const payload = {
+        id: existingRow?.id || null,
+        project_id: node.project_id,
+        node_id: ownerNodeId,
+        legacy_source_node_id: node.id,
+        is_primary: node.variant_of_id == null ? 1 : 0,
+        sort_order: node.variant_of_id == null ? 0 : nextSortOrder,
+        image_edits_json: JSON.stringify(normalizeNodeImageEdits(JSON.parse(node.image_edits_json || '{}'))),
+        image_path: node.image_path || null,
+        preview_path: node.preview_path || null,
+        original_filename: node.original_filename || null,
+        created_at: node.added_at || node.created_at || new Date().toISOString(),
+        updated_at: node.updated_at || node.created_at || new Date().toISOString(),
+      }
+      if (existingRow) {
+        updateNodeMedia.run(payload)
+      } else {
+        payload.id = generateUniqueId((candidate) => Boolean(getNodeMediaById.get(candidate)))
+        insertNodeMedia.run(payload)
+      }
+    }
+
+    db.exec(`
+      DELETE FROM node_media
+      WHERE legacy_source_node_id IS NOT NULL
+        AND legacy_source_node_id NOT IN (SELECT id FROM nodes)
+    `)
+  })
+
+  syncNodeMedia()
+}
+
 function ensureAuthSchema(db) {
   const projectColumns = db.prepare(`PRAGMA table_info(projects)`).all()
   if (!projectColumns.some((column) => column.name === 'owner_user_id')) {
@@ -486,6 +689,7 @@ export function initializeDatabase({ dbPath, generateUniqueId, normalizeNodeImag
   ensureNodeNeedsAttentionSchema(db)
   ensureNodeReviewStatusSchema(db)
   ensureNodeAddedAtSchema(db)
+  ensureNodeMediaSchema(db, { generateUniqueId, normalizeNodeImageEdits })
   ensureAuthSchema(db)
   ensureNodeOwnerSchema(db)
   ensureIdentificationSchema(db)
