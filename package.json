@@ -3,18 +3,26 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "concurrently \"node --watch apps/server/index.js\" \"vite --config apps/renderer/vite.config.js --host 0.0.0.0\"",
-    "dev:client": "vite --config apps/renderer/vite.config.js --host 0.0.0.0",
-    "dev:server": "node --watch apps/server/index.js",
-    "desktop:dev": "concurrently \"npm run dev:client\" \"electron apps/desktop/main.js --dev-url=http://127.0.0.1:5173\"",
-    "desktop:start": "electron apps/desktop/main.js",
-    "server": "node apps/server/index.js",
-    "serve:shared": "node apps/server/index.js",
-    "build": "vite build --config apps/renderer/vite.config.js",
+    "dev": "npm run dev:web",
+    "dev:web": "concurrently \"npm run dev --workspace nodetrace-server\" \"npm run dev --workspace nodetrace-renderer\"",
+    "dev:desktop": "npm run dev --workspace nodetrace-desktop",
+    "dev:server": "npm run dev --workspace nodetrace-server",
+    "dev:renderer": "npm run dev --workspace nodetrace-renderer",
+    "start": "npm run start:server",
+    "start:server": "npm run start --workspace nodetrace-server",
+    "start:desktop": "npm run start --workspace nodetrace-desktop",
+    "build": "npm run build:web",
+    "build:web": "npm run build --workspace nodetrace-renderer",
+    "preview:web": "npm run preview --workspace nodetrace-renderer",
     "lint": "eslint .",
-    "preview": "vite preview --config apps/renderer/vite.config.js --host 0.0.0.0",
-    "start": "node apps/server/index.js"
+    "lint:server": "npm run lint --workspace nodetrace-server",
+    "lint:renderer": "npm run lint --workspace nodetrace-renderer",
+    "lint:desktop": "npm run lint --workspace nodetrace-desktop"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

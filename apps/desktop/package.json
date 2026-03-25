@@ -1,5 +1,10 @@
 {
   "name": "nodetrace-desktop",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace nodetrace-renderer\" \"electron main.js --dev-url=http://127.0.0.1:5173\"",
+    "start": "electron main.js",
+    "lint": "eslint \"**/*.js\""
+  }
 }

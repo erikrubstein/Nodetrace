@@ -1,5 +1,10 @@
 {
   "name": "nodetrace-server",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js",
+    "lint": "eslint \"**/*.js\""
+  }
 }
