@@ -126,14 +126,27 @@ select {
 .panel-window-shell__titlebar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   min-height: 40px;
-  padding: 0 12px;
+  padding: 0 0 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
   font-size: 0.92rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.panel-window-shell__title {
+  min-width: 0;
+}
+
+.panel-window-shell__controls,
+.panel-window-shell__controls * {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 .panel-window-shell__body {
@@ -253,6 +266,18 @@ select {
   border-bottom: 1px solid var(--border);
 }
 
+.topbar--desktop {
+  app-region: drag;
+  -webkit-app-region: drag;
+  padding-right: 0;
+}
+
+.topbar__no-drag,
+.topbar__no-drag * {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
 .topbar__left,
 .topbar__right,
 .segmented,
@@ -266,6 +291,44 @@ select {
 
 .topbar__right {
   margin-right: -4px;
+}
+
+.desktop-window-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-left: 4px;
+}
+
+.desktop-window-controls__button {
+  width: 38px;
+  height: var(--topbar-height);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.desktop-window-controls__button:hover:not(:disabled) {
+  background: var(--menu-active);
+}
+
+.desktop-window-controls__button--close:hover:not(:disabled) {
+  background: #c75050;
+  color: #fff;
+}
+
+.desktop-window-controls__button--close {
+  width: 42px;
+  padding-right: 4px;
+}
+
+.panel-window-shell__controls .desktop-window-controls__button {
+  height: 40px;
 }
 
 .topbar__presence-list {
