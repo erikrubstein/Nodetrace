@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import express from 'express'
 import multer from 'multer'
 import Database from 'better-sqlite3'
@@ -10,13 +11,14 @@ import { renderMobileCapturePage } from './mobileCapturePage.js'
 const app = express()
 const port = Number(process.env.PORT || 3001)
 const host = process.env.HOST || '0.0.0.0'
-const baseDir = process.cwd()
-const dataDir = path.join(baseDir, 'data')
+const serverDir = path.dirname(fileURLToPath(import.meta.url))
+const repoRootDir = path.resolve(serverDir, '../..')
+const dataDir = path.join(repoRootDir, 'data')
 const uploadsDir = path.join(dataDir, 'uploads')
 const tempDir = path.join(dataDir, 'tmp')
 const dbPath = path.join(dataDir, 'database.db')
-const distDir = path.join(baseDir, 'dist')
-loadEnvFile(path.join(baseDir, '.env'))
+const distDir = path.join(repoRootDir, 'dist')
+loadEnvFile(path.join(repoRootDir, '.env'))
 const projectEventClients = new Map()
 const activeDesktopSessions = new Map()
 const activeMobileConnections = new Map()

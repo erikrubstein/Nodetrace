@@ -4,15 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"node --watch server/index.js\" \"vite --host 0.0.0.0\"",
-    "dev:client": "vite --host 0.0.0.0",
-    "dev:server": "node --watch server/index.js",
-    "server": "node server/index.js",
-    "serve:shared": "node server/index.js",
-    "build": "vite build",
+    "dev": "concurrently \"node --watch apps/server/index.js\" \"vite --config apps/renderer/vite.config.js --host 0.0.0.0\"",
+    "dev:client": "vite --config apps/renderer/vite.config.js --host 0.0.0.0",
+    "dev:server": "node --watch apps/server/index.js",
+    "server": "node apps/server/index.js",
+    "serve:shared": "node apps/server/index.js",
+    "build": "vite build --config apps/renderer/vite.config.js",
     "lint": "eslint .",
-    "preview": "vite preview --host 0.0.0.0",
-    "start": "node server/index.js"
+    "preview": "vite preview --config apps/renderer/vite.config.js --host 0.0.0.0",
+    "start": "node apps/server/index.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
