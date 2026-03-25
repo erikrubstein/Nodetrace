@@ -104,22 +104,13 @@ export function renderMobileCapturePage() {
         display: none;
       }
 
-      .capture-button {
+      .capture-primary {
         flex: 1;
         min-height: 0;
-        border-radius: 14px;
-        background: var(--text);
-        color: var(--bg);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        font-size: 1.05rem;
-        font-weight: 700;
-        padding: 24px;
+        position: relative;
       }
 
-      .secondary-row {
+      .capture-secondary-row {
         display: grid;
         gap: 10px;
         grid-template-columns: 1fr;
@@ -138,14 +129,69 @@ export function renderMobileCapturePage() {
         gap: 10px;
       }
 
-      .capture-variant-button {
+      .capture-card {
+        position: relative;
+        display: flex;
+        align-items: stretch;
+        min-height: 88px;
+      }
+
+      .capture-card--primary {
+        min-height: 0;
+        flex: 1;
+      }
+
+      .capture-card--secondary {
+        min-height: 106px;
+      }
+
+      .capture-button {
+        flex: 1;
+        min-height: 0;
+        border-radius: 14px;
+        background: var(--text);
+        color: var(--bg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 1.05rem;
+        font-weight: 700;
+        padding: 24px;
+      }
+
+      .capture-button--secondary {
         background: var(--surface);
         color: var(--text);
-        border-radius: 12px;
+        font-size: 0.98rem;
+        font-weight: 600;
+        padding-right: 58px;
+      }
+
+      .capture-tool-button {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--bg) 16%, var(--surface));
+        color: var(--text);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        font-size: 1rem;
+      }
+
+      .capture-card--primary .capture-tool-button {
+        background: color-mix(in srgb, var(--bg) 18%, var(--panel));
+        color: var(--text);
       }
 
       button:disabled,
-      .capture-button.disabled {
+      .capture-button.disabled,
+      .capture-tool-button:disabled {
         opacity: 0.45;
         pointer-events: none;
       }
@@ -190,12 +236,19 @@ export function renderMobileCapturePage() {
           <div id="sessionReadout" class="status"></div>
           <button id="disconnectButton" type="button">Disconnect</button>
         </section>
-        <label class="capture-button" for="captureInput">Tap Anywhere To Take Photo</label>
-        <input id="captureInput" class="capture-input" type="file" accept="image/*" capture="environment" />
+        <div class="capture-primary">
+          <div class="capture-card capture-card--primary">
+            <label class="capture-button" for="captureInput">Take New Photo Node</label>
+            <button id="chooseChildButton" class="capture-tool-button" type="button" aria-label="Choose existing photo for new photo node">+</button>
+          </div>
+          <input id="captureInput" class="capture-input" type="file" accept="image/*" capture="environment" />
+        </div>
 
-        <div class="secondary-row">
-          <button id="variantButton" class="capture-variant-button" type="button">Take Variant Photo</button>
-          <button id="chooseButton" type="button">Choose Existing Photo</button>
+        <div class="capture-secondary-row">
+          <div class="capture-card capture-card--secondary">
+            <button id="variantButton" class="capture-button capture-button--secondary" type="button">Take Additional Photo</button>
+            <button id="chooseVariantButton" class="capture-tool-button" type="button" aria-label="Choose existing additional photo">+</button>
+          </div>
         </div>
       </section>
     </main>
@@ -209,7 +262,8 @@ export function renderMobileCapturePage() {
       const captureInput = document.getElementById('captureInput')
       const captureButton = document.querySelector('.capture-button')
       const variantButton = document.getElementById('variantButton')
-      const chooseButton = document.getElementById('chooseButton')
+      const chooseChildButton = document.getElementById('chooseChildButton')
+      const chooseVariantButton = document.getElementById('chooseVariantButton')
       const disconnectButton = document.getElementById('disconnectButton')
       const sessionReadout = document.getElementById('sessionReadout')
       const statusEl = document.getElementById('status')
@@ -240,7 +294,8 @@ export function renderMobileCapturePage() {
       function setCaptureEnabled(enabled) {
         captureButton.classList.toggle('disabled', !enabled)
         variantButton.disabled = !enabled
-        chooseButton.disabled = !enabled
+        chooseChildButton.disabled = !enabled
+        chooseVariantButton.disabled = !enabled
       }
 
       function setStatus(message, isError = false) {
@@ -366,7 +421,7 @@ export function renderMobileCapturePage() {
           setConnectedState(true)
           setCaptureEnabled(true)
           sessionReadout.textContent = \`Session \${sessionId} | \${sessionInfo.projectName} -> \${sessionInfo.selectedNodeName}\`
-          setStatus(\`\${sessionInfo.projectName} -> \${sessionInfo.selectedNodeName}\`)
+          setStatus(\`New photo node under \${sessionInfo.selectedNodeName} or add another photo to it.\`)
         } catch (error) {
           sessionInfo = null
           setCaptureEnabled(false)
@@ -445,8 +500,17 @@ export function renderMobileCapturePage() {
         captureInput.click()
       })
 
-      chooseButton.addEventListener('click', () => {
+      chooseChildButton.addEventListener('click', () => {
         uploadMode = 'child'
+        captureInput.removeAttribute('capture')
+        captureInput.click()
+        window.setTimeout(() => {
+          captureInput.setAttribute('capture', 'environment')
+        }, 0)
+      })
+
+      chooseVariantButton.addEventListener('click', () => {
+        uploadMode = 'variant'
         captureInput.removeAttribute('capture')
         captureInput.click()
         window.setTimeout(() => {

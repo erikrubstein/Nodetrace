@@ -618,6 +618,29 @@ export function buildNodePath(nodes, selectedNodeId) {
   return path.reverse()
 }
 
+export function buildNodePathEntries(nodes, selectedNodeId) {
+  if (!selectedNodeId || !nodes?.length) {
+    return []
+  }
+
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const path = []
+  const seen = new Set()
+  let currentId = selectedNodeId
+
+  while (currentId != null && byId.has(currentId) && !seen.has(currentId)) {
+    seen.add(currentId)
+    const current = byId.get(currentId)
+    path.push({
+      id: current.id,
+      name: current.name,
+    })
+    currentId = current.variant_of_id ?? current.parent_id ?? null
+  }
+
+  return path.reverse()
+}
+
 export function compactNodePath(path, options = {}) {
   const maxChars = options.maxChars ?? 72
   if (!Array.isArray(path) || path.length === 0) {

@@ -140,12 +140,13 @@ export default function FieldsPanel({
             <span className="identification-template__name">{identification.templateName}</span>
             <div className="identification-template__actions">
               <button
-                className="ghost-button identification-template__action"
+                aria-label="Remove template"
+                className="tool-button identification-template__action"
                 disabled={busy}
                 onClick={openRemoveTemplateDialog}
                 type="button"
               >
-                Remove Template
+                <i aria-hidden="true" className="fa-solid fa-xmark" />
               </button>
             </div>
           </div>

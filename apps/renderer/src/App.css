@@ -977,12 +977,12 @@ select {
 .canvas-caption {
   position: absolute;
   bottom: 12px;
-  display: block;
+  display: flex;
+  align-items: center;
   padding: 2px 6px;
   border-radius: 6px;
   background: var(--canvas);
   font-size: 0.82rem;
-  max-width: calc(50% - 24px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -991,17 +991,68 @@ select {
 
 .canvas-caption--left {
   left: 12px;
+  right: 180px;
+  max-width: calc(50% - 12px);
   text-align: left;
 }
 
 .canvas-caption--right {
   right: 12px;
   text-align: right;
+  justify-content: flex-end;
+  max-width: 168px;
 }
 
-.canvas-caption__selected {
+.canvas-caption__path {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.canvas-caption__segment {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.canvas-caption__ellipsis,
+.canvas-caption__separator {
+  color: var(--muted);
+  flex: 0 0 auto;
+  margin-inline: 5px;
+}
+
+.canvas-caption__node {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+
+.canvas-caption__node:hover {
+  color: var(--text);
+}
+
+.canvas-caption__node.is-selected {
   text-decoration: underline;
   text-underline-offset: 0.14em;
+}
+
+.canvas-caption__path-measure {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  visibility: hidden;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
 }
 
 .drop-overlay {
@@ -1294,9 +1345,12 @@ select {
 }
 
 .identification-template__action {
-  width: auto;
-  min-width: 0;
-  padding-inline: 10px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .inspector__notice.error,

@@ -40,6 +40,7 @@ export function registerNodeRoutes(app, ctx) {
     updateNodeMediaEdits,
     removeNodeMedia,
     setPrimaryNodeMedia,
+    buildTree,
   } = ctx
 
   app.patch('/api/nodes/:id', requireAuth, (req, res, next) => {
@@ -113,6 +114,79 @@ export function registerNodeRoutes(app, ctx) {
       updateProjectTimestamp.run(new Date().toISOString(), node.project_id)
       broadcastProjectEvent(node.project_id)
       res.json(serializeNodeForUser(assertNode(node.id), req.user.id))
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/projects/:id/identification/apply-bulk', requireAuth, (req, res, next) => {
+    try {
+      const project = assertProjectAccess(req.params.id, req.user.id)
+      const template = assertIdentificationTemplateAccess(req.body?.templateId, project.id)
+      const requestedNodeIds = Array.isArray(req.body?.nodeIds) ? req.body.nodeIds : []
+      const targetNodes = Array.from(
+        new Map(
+          requestedNodeIds
+            .map((nodeId) => assertNodeAccess(String(nodeId || '').trim(), req.user.id))
+            .filter((node) => node.project_id === project.id)
+            .map((node) => [node.id, node]),
+        ).values(),
+      )
+
+      if (!targetNodes.length) {
+        return res.status(400).json({ error: 'Select at least one node' })
+      }
+
+      const now = new Date().toISOString()
+      for (const node of targetNodes) {
+        const existing = getNodeIdentification.get(node.id)
+        if (!existing || existing.template_id !== template.id) {
+          deleteNodeIdentificationFieldValuesByNodeStmt.run(node.id)
+        }
+
+        upsertNodeIdentification.run({
+          node_id: node.id,
+          template_id: template.id,
+          created_by_user_id: existing?.created_by_user_id || req.user.id,
+          created_at: existing?.created_at || now,
+          updated_at: now,
+        })
+      }
+
+      updateProjectTimestamp.run(now, project.id)
+      broadcastProjectEvent(project.id)
+      res.json({ ok: true, tree: buildTree(project, getProjectNodes.all(project.id), req.user.id) })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/projects/:id/identification/remove-bulk', requireAuth, (req, res, next) => {
+    try {
+      const project = assertProjectAccess(req.params.id, req.user.id)
+      const requestedNodeIds = Array.isArray(req.body?.nodeIds) ? req.body.nodeIds : []
+      const targetNodes = Array.from(
+        new Map(
+          requestedNodeIds
+            .map((nodeId) => assertNodeAccess(String(nodeId || '').trim(), req.user.id))
+            .filter((node) => node.project_id === project.id)
+            .map((node) => [node.id, node]),
+        ).values(),
+      )
+
+      if (!targetNodes.length) {
+        return res.status(400).json({ error: 'Select at least one node' })
+      }
+
+      const now = new Date().toISOString()
+      for (const node of targetNodes) {
+        deleteNodeIdentificationFieldValuesByNodeStmt.run(node.id)
+        deleteNodeIdentificationStmt.run(node.id)
+      }
+
+      updateProjectTimestamp.run(now, project.id)
+      broadcastProjectEvent(project.id)
+      res.json({ ok: true, tree: buildTree(project, getProjectNodes.all(project.id), req.user.id) })
     } catch (error) {
       next(error)
     }
@@ -374,6 +448,38 @@ export function registerNodeRoutes(app, ctx) {
       deleteNodeRecursive(node.id, node.project_id)
       broadcastProjectEvent(node.project_id)
       res.status(204).send()
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/projects/:id/nodes/delete-bulk', requireAuth, (req, res, next) => {
+    try {
+      const project = assertProjectAccess(req.params.id, req.user.id)
+      const requestedNodeIds = Array.isArray(req.body?.nodeIds) ? req.body.nodeIds : []
+      const targetNodes = Array.from(
+        new Map(
+          requestedNodeIds
+            .map((nodeId) => assertNodeAccess(String(nodeId || '').trim(), req.user.id))
+            .filter((node) => node.project_id === project.id)
+            .map((node) => [node.id, node]),
+        ).values(),
+      )
+
+      if (!targetNodes.length) {
+        return res.status(400).json({ error: 'Select at least one node' })
+      }
+
+      for (const node of targetNodes) {
+        ensureNotRoot(node)
+      }
+
+      for (const node of targetNodes) {
+        deleteNodeRecursive(node.id, project.id)
+      }
+
+      broadcastProjectEvent(project.id)
+      res.json({ ok: true, tree: buildTree(project, getProjectNodes.all(project.id), req.user.id) })
     } catch (error) {
       next(error)
     }

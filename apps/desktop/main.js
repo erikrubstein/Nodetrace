@@ -13,6 +13,7 @@ const serverEntryPath = path.join(repoRootDir, 'apps/server/index.js')
 const preloadPath = path.join(desktopDir, 'preload.cjs')
 const desktopLogPath = path.join(repoRootDir, 'data', 'tmp', 'desktop.log')
 const appIconPath = path.join(repoRootDir, 'apps', 'renderer', 'public', 'nodetrace.svg')
+const serverBindHost = '0.0.0.0'
 const desktopHost = '127.0.0.1'
 const desktopPort = Number(process.env.PORT || 3001)
 const desktopBaseUrl = `http://${desktopHost}:${desktopPort}`
@@ -100,7 +101,7 @@ function ensureServerProcess() {
     cwd: repoRootDir,
     env: {
       ...process.env,
-      HOST: desktopHost,
+      HOST: serverBindHost,
       PORT: String(desktopPort),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -111,7 +112,7 @@ function ensureServerProcess() {
     logDesktop('Server child process exited')
     serverProcess = null
   })
-  logDesktop(`Spawned server process with ${serverNodeExecPath} on ${desktopBaseUrl}`)
+  logDesktop(`Spawned server process with ${serverNodeExecPath} on http://${serverBindHost}:${desktopPort}`)
 }
 
 async function waitForServerReady() {

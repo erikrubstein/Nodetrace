@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+const RESERVED_TAGS = new Set(['any'])
+
 function normalizeTagList(tags) {
   const seen = new Set()
   const nextTags = []
   for (const tag of tags || []) {
     const normalized = String(tag || '').trim()
     const key = normalized.toLowerCase()
-    if (!normalized || seen.has(key)) {
+    if (!normalized || RESERVED_TAGS.has(key) || seen.has(key)) {
       continue
     }
     seen.add(key)

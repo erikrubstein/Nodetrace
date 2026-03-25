@@ -899,6 +899,7 @@ const createProjectWithRoot = db.transaction(({ name, description, owner_user_id
     name,
     notes: '',
     tags_json: '[]',
+    review_status: 'new',
     needs_attention: 0,
     image_edits_json: JSON.stringify(defaultNodeImageEdits),
     variant_of_id: null,
@@ -1377,14 +1378,19 @@ function parseTags(input) {
     return []
   }
 
+  const normalizeTag = (tag) => String(tag || '').trim()
+  const isReservedTag = (tag) => normalizeTag(tag).toLowerCase() === 'any'
+
   if (Array.isArray(input)) {
-    return input.map((tag) => String(tag).trim()).filter(Boolean)
+    return input
+      .map(normalizeTag)
+      .filter((tag) => tag && !isReservedTag(tag))
   }
 
   return String(input)
     .split(',')
-    .map((tag) => tag.trim())
-    .filter(Boolean)
+    .map(normalizeTag)
+    .filter((tag) => tag && !isReservedTag(tag))
 }
 
 function sanitizeUploadName(filename, fallback = 'file.jpg') {

@@ -33,8 +33,7 @@ import {
 import { blobFromUrl, createPreviewFile } from './lib/image'
 import {
   buildClientTree,
-  buildNodePath,
-  compactNodePath,
+  buildNodePathEntries,
   buildFocusPathContext,
   buildLayout,
   buildVisibleTree,
@@ -661,7 +660,7 @@ function App() {
     return currentSignature !== originalSignature
   }, [selectedTemplateEditor, templateForm.aiInstructions, templateForm.childDepth, templateForm.fields, templateForm.name, templateForm.parentDepth])
   const selectedNodePath = useMemo(
-    () => compactNodePath(buildNodePath(tree?.nodes, selectedNodeId)),
+    () => buildNodePathEntries(tree?.nodes, selectedNodeId),
     [selectedNodeId, tree?.nodes],
   )
 
@@ -841,6 +840,7 @@ function App() {
 
       const nextProjectId = payload.projectId || null
       const nextNodeId = payload.nodeId || null
+      const shouldFocus = Boolean(payload.focusNode)
       if (!nextProjectId) {
         return
       }
@@ -852,6 +852,9 @@ function App() {
         setSelectedNodeId(nextNodeId)
       } else if (nextNodeId && nextNodeId !== selectedNodeId) {
         setSelectedNodeId(nextNodeId)
+      }
+      if (shouldFocus && nextNodeId) {
+        pendingFocusNodeIdRef.current = nextNodeId
       }
     }
 
@@ -1883,28 +1886,27 @@ function App() {
     setError('')
     setBusy(true)
     try {
-      for (const node of explicitSelectedNodes) {
-        await applyIdentificationTemplateRequest(node.id, templateId)
-      }
+      const response = await api(`/api/projects/${selectedProjectId}/identification/apply-bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId,
+          nodeIds: explicitSelectedNodes.map((node) => node.id),
+        }),
+      })
+      applyTreePayload(response.tree)
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === response.tree.project.id
+            ? { ...project, ...response.tree.project, node_count: response.tree.nodes.length }
+            : project,
+        ),
+      )
       setShowProjectDialog(null)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
       setBusy(false)
-    }
-  }
-
-  async function removeIdentificationTemplateRequest(nodeId) {
-    const rollbackLocalEvent = beginLocalEventExpectation()
-    try {
-      const updatedNode = await api(`/api/nodes/${nodeId}/identification`, {
-        method: 'DELETE',
-      })
-      applyNodeUpdate(updatedNode)
-      return updatedNode
-    } catch (error) {
-      rollbackLocalEvent()
-      throw error
     }
   }
 
@@ -1925,9 +1927,21 @@ function App() {
     setError('')
     setBusy(true)
     try {
-      for (const nodeId of identificationTemplateRemovalNodeIds) {
-        await removeIdentificationTemplateRequest(nodeId)
-      }
+      const response = await api(`/api/projects/${selectedProjectId}/identification/remove-bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodeIds: identificationTemplateRemovalNodeIds,
+        }),
+      })
+      applyTreePayload(response.tree)
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === response.tree.project.id
+            ? { ...project, ...response.tree.project, node_count: response.tree.nodes.length }
+            : project,
+        ),
+      )
       setIdentificationTemplateRemoval(null)
     } catch (submitError) {
       setError(submitError.message)
@@ -3009,8 +3023,18 @@ function App() {
     }
 
     pendingFocusNodeIdRef.current = nodeId
+    if (isDesktopEnvironment() && typeof BroadcastChannel !== 'undefined' && selectedProjectId) {
+      const channel = new BroadcastChannel(DESKTOP_SELECTION_SYNC_CHANNEL)
+      channel.postMessage({
+        sourceId: windowInstanceIdRef.current,
+        projectId: selectedProjectId,
+        nodeId,
+        focusNode: true,
+      })
+      channel.close()
+    }
     setEffectiveSelection([nodeId], nodeId)
-  }, [editForm, editTargetNode, saveNodeDraft, setCollapsed, setEffectiveSelection, tree?.nodes])
+  }, [editForm, editTargetNode, saveNodeDraft, selectedProjectId, setCollapsed, setEffectiveSelection, tree?.nodes])
 
   const bulkSelectSearchResults = useCallback((nodeIds) => {
     const uniqueIds = Array.from(new Set((nodeIds || []).filter(Boolean)))
@@ -3119,19 +3143,22 @@ function App() {
         })
       }
 
-      for (const entry of [...deleteEntries].reverse()) {
-        const rollbackLocalEvent = beginLocalEventExpectation()
-        try {
-          await deleteNodeRequest(entry.currentRootId)
-        } catch (error) {
-          rollbackLocalEvent()
-          throw error
-        }
-      }
+      const response = await api(`/api/projects/${selectedProjectId}/nodes/delete-bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodeIds: deleteEntries.map((entry) => entry.currentRootId),
+        }),
+      })
       setDeleteNodeOpen(false)
-      const removedIds = new Set(deleteEntries.flatMap((entry) => entry.subtreeIds))
-      removeNodesFromTree(Array.from(removedIds))
-      updateProjectListNodeCount(-removedIds.size)
+      applyTreePayload(response.tree)
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === response.tree.project.id
+            ? { ...project, ...response.tree.project, node_count: response.tree.nodes.length }
+            : project,
+        ),
+      )
       setMultiSelectedNodeIds([])
       setSelectedNodeId(selectedNode.parent_id ?? deleteEntries[0]?.fallbackId ?? null)
 
@@ -3167,23 +3194,29 @@ function App() {
           },
           redo: async () => {
             const removedAgainIds = new Set()
-            for (const entry of [...deleteEntries].reverse()) {
-              const rollbackRedoEvent = beginLocalEventExpectation()
+            for (const entry of deleteEntries) {
               const currentTree = treeRef.current
               const currentSubtreeNode = findNode(currentTree?.root, entry.currentRootId)
               const currentSubtreeIds = Array.from(
                 collectDescendantIds(currentSubtreeNode || { id: entry.currentRootId, children: [], variants: [] }),
               )
-              try {
-                await deleteNodeRequest(entry.currentRootId)
-              } catch (error) {
-                rollbackRedoEvent()
-                throw error
-              }
               currentSubtreeIds.forEach((id) => removedAgainIds.add(id))
             }
-            removeNodesFromTree(Array.from(removedAgainIds))
-            updateProjectListNodeCount(-removedAgainIds.size)
+            const redoResponse = await api(`/api/projects/${selectedProjectId}/nodes/delete-bulk`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                nodeIds: deleteEntries.map((entry) => entry.currentRootId),
+              }),
+            })
+            applyTreePayload(redoResponse.tree)
+            setProjects((current) =>
+              current.map((project) =>
+                project.id === redoResponse.tree.project.id
+                  ? { ...project, ...redoResponse.tree.project, node_count: redoResponse.tree.nodes.length }
+                  : project,
+              ),
+            )
             setMultiSelectedNodeIds([])
             setSelectedNodeId(selectedNode.parent_id ?? deleteEntries[0]?.fallbackId ?? null)
           },
@@ -3376,9 +3409,11 @@ function App() {
         icon: <SearchIcon />,
         content: (
           <SearchPanel
+            key={selectedProjectId || 'global'}
             bulkSelectNodeIds={bulkSelectSearchResults}
             onResultsChange={setSearchResultNodeIds}
             onSelectNode={selectNodeAndFocus}
+            projectId={selectedProjectId}
             selectedNodeId={selectedNodeId}
             selectedNodeIds={effectiveSelectedNodeIds}
             templates={identificationTemplates}
@@ -3749,6 +3784,7 @@ function App() {
           searchResultNodeIds={searchResultNodeIds}
           selectRootNode={selectRootNode}
           selectedNodePath={selectedNodePath}
+          selectNodeFromPath={selectNodeAndFocus}
           saveNodeDraft={saveNodeDraft}
           selectedNode={selectedNode}
           selectedNodeId={selectedNodeId}

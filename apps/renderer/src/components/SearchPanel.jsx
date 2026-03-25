@@ -3,26 +3,31 @@ import { collectDescendantIds, findNode } from '../lib/tree'
 
 import IconButton from './IconButton'
 
+const SEARCH_SESSION_KEY_PREFIX = 'nodetrace-search-state'
+
 const statusOptions = [
   { value: 'new', label: 'New' },
   { value: 'reviewed', label: 'Reviewed' },
   { value: 'needs_attention', label: 'Needs Attention' },
 ]
 
-const noteOptions = [
-  { value: 'has_notes', label: 'Has Notes' },
-  { value: 'no_notes', label: 'Has No Notes' },
+const photoOptions = [
+  { value: 'has_photos', label: 'Has Photos' },
+  { value: 'one_photo', label: 'Has One Photo' },
+  { value: 'no_photo', label: 'Has No Photos' },
 ]
 
-const typeOptions = [
-  { value: 'with_photo', label: 'With Photo' },
-  { value: 'without_photo', label: 'Without Photo' },
-]
+function loadStoredSearchState(storageKey) {
+  if (typeof window === 'undefined') {
+    return null
+  }
 
-const variantOptions = [
-  { value: 'multiple_photos', label: 'Multiple Photos' },
-  { value: 'single_or_none', label: 'Single or No Photos' },
-]
+  try {
+    return JSON.parse(window.sessionStorage.getItem(storageKey) || 'null')
+  } catch {
+    return null
+  }
+}
 
 function optionRow({ checked, itemKey, label, onClick, type = 'single' }) {
   return (
@@ -46,40 +51,53 @@ function optionRow({ checked, itemKey, label, onClick, type = 'single' }) {
 export default function SearchPanel({
   bulkSelectNodeIds,
   onResultsChange,
+  onSelectNode,
+  projectId,
   selectedNodeId,
   selectedNodeIds,
   templates,
   tree,
-  onSelectNode,
 }) {
   const filterPopoverRef = useRef(null)
   const resultsRef = useRef(null)
-  const [query, setQuery] = useState('')
+  const sessionHydratedRef = useRef(false)
+  const storageKey = `${SEARCH_SESSION_KEY_PREFIX}:${projectId || 'global'}`
+  const initialState = useMemo(() => loadStoredSearchState(storageKey), [storageKey])
+  const [query, setQuery] = useState(() => (typeof initialState?.query === 'string' ? initialState.query : ''))
   const [filterMenuOpen, setFilterMenuOpen] = useState(false)
-  const [selectedTemplateIds, setSelectedTemplateIds] = useState([])
-  const [selectedTags, setSelectedTags] = useState([])
-  const [selectedOwnerUsernames, setSelectedOwnerUsernames] = useState([])
-  const [anyTemplateOnly, setAnyTemplateOnly] = useState(false)
-  const [statusFilter, setStatusFilter] = useState('')
-  const [notesFilter, setNotesFilter] = useState('')
-  const [typeFilter, setTypeFilter] = useState('')
-  const [selectionScopeFilter, setSelectionScopeFilter] = useState(false)
-  const [variantPresenceFilter, setVariantPresenceFilter] = useState('')
-  const [sortField, setSortField] = useState('name')
-  const [sortDirection, setSortDirection] = useState('asc')
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState(() => (Array.isArray(initialState?.selectedTemplateIds) ? initialState.selectedTemplateIds : []))
+  const [selectedTags, setSelectedTags] = useState(() =>
+    Array.isArray(initialState?.selectedTags)
+      ? initialState.selectedTags.filter((tag) => String(tag || '').trim().toLowerCase() !== 'any')
+      : [],
+  )
+  const [anyTagOnly, setAnyTagOnly] = useState(() => Boolean(initialState?.anyTagOnly))
+  const [selectedOwnerUsernames, setSelectedOwnerUsernames] = useState(() => (Array.isArray(initialState?.selectedOwnerUsernames) ? initialState.selectedOwnerUsernames : []))
+  const [anyTemplateOnly, setAnyTemplateOnly] = useState(() => Boolean(initialState?.anyTemplateOnly))
+  const [statusFilter, setStatusFilter] = useState(() => (typeof initialState?.statusFilter === 'string' ? initialState.statusFilter : ''))
+  const [selectedNoteFilters, setSelectedNoteFilters] = useState(() =>
+    Array.isArray(initialState?.selectedNoteFilters) ? initialState.selectedNoteFilters : [],
+  )
+  const [selectedPhotoFilters, setSelectedPhotoFilters] = useState(() =>
+    Array.isArray(initialState?.selectedPhotoFilters) ? initialState.selectedPhotoFilters : [],
+  )
+  const [selectionScopeFilter, setSelectionScopeFilter] = useState(() => Boolean(initialState?.selectionScopeFilter))
+  const [sortField, setSortField] = useState(() => (initialState?.sortField === 'added_at' ? 'added_at' : 'name'))
+  const [sortDirection, setSortDirection] = useState(() => (initialState?.sortDirection === 'desc' ? 'desc' : 'asc'))
   const activeFilterCount =
     Number(Boolean(anyTemplateOnly || selectedTemplateIds.length)) +
     Number(Boolean(statusFilter)) +
-    Number(Boolean(notesFilter)) +
-    Number(Boolean(typeFilter)) +
+    Number(Boolean(selectedNoteFilters.length)) +
+    Number(Boolean(selectedPhotoFilters.length)) +
     Number(Boolean(selectionScopeFilter)) +
-    Number(Boolean(variantPresenceFilter)) +
-    Number(Boolean(selectedTags.length)) +
+    Number(Boolean(anyTagOnly || selectedTags.length)) +
     Number(Boolean(selectedOwnerUsernames.length))
+
   const templateNameById = useMemo(
     () => new Map((templates || []).map((template) => [template.id, template.name])),
     [templates],
   )
+
   const ownerOptions = useMemo(
     () =>
       Array.from(
@@ -91,6 +109,7 @@ export default function SearchPanel({
       ).sort((a, b) => a.localeCompare(b)),
     [tree?.nodes],
   )
+
   const tagOptions = useMemo(
     () =>
       Array.from(
@@ -98,11 +117,54 @@ export default function SearchPanel({
           (tree?.nodes || [])
             .flatMap((node) => node.tags || [])
             .map((tag) => String(tag || '').trim())
-            .filter(Boolean),
+            .filter((tag) => tag && tag.toLowerCase() !== 'any'),
         ),
       ).sort((left, right) => left.localeCompare(right)),
     [tree?.nodes],
   )
+
+  useEffect(() => {
+    sessionHydratedRef.current = true
+  }, [])
+
+  useEffect(() => {
+    if (!sessionHydratedRef.current || typeof window === 'undefined') {
+      return
+    }
+
+    window.sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        query,
+        selectedTemplateIds,
+        selectedTags,
+        anyTagOnly,
+        selectedOwnerUsernames,
+        anyTemplateOnly,
+        statusFilter,
+        selectedNoteFilters,
+        selectedPhotoFilters,
+        selectionScopeFilter,
+        sortField,
+        sortDirection,
+      }),
+    )
+  }, [
+    anyTagOnly,
+    anyTemplateOnly,
+    selectedNoteFilters,
+    selectedPhotoFilters,
+    query,
+    selectedOwnerUsernames,
+    selectedTags,
+    selectedTemplateIds,
+    selectionScopeFilter,
+    sortDirection,
+    sortField,
+    statusFilter,
+    storageKey,
+  ])
+
   const selectionScopeIds = useMemo(() => {
     if (!selectionScopeFilter || !tree?.root || !selectedNodeIds?.length) {
       return null
@@ -143,13 +205,16 @@ export default function SearchPanel({
         return (node.reviewStatus || 'new') === statusFilter
       })
       .filter((node) => {
-        if (!notesFilter) {
+        if (!selectedNoteFilters.length) {
           return true
         }
         const hasNotes = Boolean(node.notes?.trim())
-        return notesFilter === 'has_notes' ? hasNotes : !hasNotes
+        return selectedNoteFilters.some((filterValue) => (filterValue === 'has_notes' ? hasNotes : !hasNotes))
       })
       .filter((node) => {
+        if (anyTagOnly) {
+          return Array.isArray(node.tags) && node.tags.length > 0
+        }
         if (!selectedTags.length) {
           return true
         }
@@ -162,17 +227,19 @@ export default function SearchPanel({
         return selectionScopeIds.has(node.id)
       })
       .filter((node) => {
-        if (!typeFilter) {
+        if (!selectedPhotoFilters.length) {
           return true
         }
-        return typeFilter === 'with_photo' ? Boolean(node.hasImage) : !node.hasImage
-      })
-      .filter((node) => {
-        if (!variantPresenceFilter) {
-          return true
-        }
-        const hasMultiplePhotos = Number(node.mediaCount || 0) > 1
-        return variantPresenceFilter === 'multiple_photos' ? hasMultiplePhotos : !hasMultiplePhotos
+        const mediaCount = Number(node.mediaCount || 0)
+        return selectedPhotoFilters.some((filterValue) => {
+          if (filterValue === 'no_photo') {
+            return mediaCount === 0
+          }
+          if (filterValue === 'one_photo') {
+            return mediaCount === 1
+          }
+          return mediaCount > 1
+        })
       })
       .filter((node) => !selectedOwnerUsernames.length || selectedOwnerUsernames.includes(node.ownerUsername))
       .sort((left, right) => {
@@ -184,7 +251,21 @@ export default function SearchPanel({
         }
         return sortDirection === 'desc' ? comparison * -1 : comparison
       })
-  }, [anyTemplateOnly, notesFilter, query, selectedOwnerUsernames, selectedTags, selectedTemplateIds, selectionScopeIds, sortDirection, sortField, statusFilter, tree?.nodes, typeFilter, variantPresenceFilter])
+  }, [
+    anyTagOnly,
+    anyTemplateOnly,
+    query,
+    selectedNoteFilters,
+    selectedPhotoFilters,
+    selectedOwnerUsernames,
+    selectedTags,
+    selectedTemplateIds,
+    selectionScopeIds,
+    sortDirection,
+    sortField,
+    statusFilter,
+    tree?.nodes,
+  ])
 
   useEffect(() => {
     onResultsChange?.(results.map((node) => node.id))
@@ -266,207 +347,224 @@ export default function SearchPanel({
             />
             <div className="search-panel__filter-popover-wrap">
               <div ref={filterPopoverRef}>
-              <IconButton
-                aria-label="More filters"
-                className={`tool-button search-panel__filter-button ${filterMenuOpen || activeFilterCount ? 'is-active' : ''}`}
-                onClick={() => setFilterMenuOpen((current) => !current)}
-                tooltip="Filters"
-              >
-                <i aria-hidden="true" className="fa-solid fa-filter" />
-              </IconButton>
-              {filterMenuOpen ? (
-                <div className="search-panel__filter-popover">
-                  <div className="search-panel__filter-header">
-                    <span>More Filters</span>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => {
-                        setAnyTemplateOnly(false)
-                        setSelectedTemplateIds([])
-                        setStatusFilter('')
-                        setNotesFilter('')
-                        setTypeFilter('')
-                        setSelectionScopeFilter(false)
-                        setVariantPresenceFilter('')
-                        setSelectedTags([])
-                        setSelectedOwnerUsernames([])
-                      }}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Review Status</span>
-                    <div className="search-panel__option-list">
-                      {statusOptions.map((option) =>
-                        optionRow({
-                          checked: statusFilter === option.value,
-                          itemKey: option.value,
-                          label: option.label,
-                          onClick: () => setStatusFilter((current) => (current === option.value ? '' : option.value)),
-                        }),
-                      )}
+                <IconButton
+                  aria-label="More filters"
+                  className={`tool-button search-panel__filter-button ${filterMenuOpen || activeFilterCount ? 'is-active' : ''}`}
+                  onClick={() => setFilterMenuOpen((current) => !current)}
+                  tooltip="Filters"
+                >
+                  <i aria-hidden="true" className="fa-solid fa-filter" />
+                </IconButton>
+                {filterMenuOpen ? (
+                  <div className="search-panel__filter-popover">
+                    <div className="search-panel__filter-header">
+                      <span>More Filters</span>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => {
+                          setAnyTemplateOnly(false)
+                          setSelectedTemplateIds([])
+                          setStatusFilter('')
+                          setSelectedNoteFilters([])
+                          setSelectedPhotoFilters([])
+                          setSelectionScopeFilter(false)
+                          setAnyTagOnly(false)
+                          setSelectedTags([])
+                          setSelectedOwnerUsernames([])
+                        }}
+                      >
+                        Clear
+                      </button>
                     </div>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Notes</span>
-                    <div className="search-panel__option-list">
-                      {noteOptions.map((option) =>
-                        optionRow({
-                          checked: notesFilter === option.value,
-                          itemKey: option.value,
-                          label: option.label,
-                          onClick: () => setNotesFilter((current) => (current === option.value ? '' : option.value)),
-                        }),
-                      )}
+                    <div className="search-panel__filter-group">
+                      <span className="search-panel__filter-label">Review Status</span>
+                      <div className="search-panel__option-list">
+                        {statusOptions.map((option) =>
+                          optionRow({
+                            checked: statusFilter === option.value,
+                            itemKey: option.value,
+                            label: option.label,
+                            onClick: () => setStatusFilter((current) => (current === option.value ? '' : option.value)),
+                          }),
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Type</span>
-                    <div className="search-panel__option-list">
-                      {typeOptions.map((option) =>
-                        optionRow({
-                          checked: typeFilter === option.value,
-                          itemKey: option.value,
-                          label: option.label,
-                          onClick: () => setTypeFilter((current) => (current === option.value ? '' : option.value)),
-                        }),
-                      )}
+                    <div className="search-panel__filter-group">
+                      <span className="search-panel__filter-label">Notes</span>
+                      <div className="search-panel__option-list">
+                        {[
+                          { value: 'has_notes', label: 'Has Notes' },
+                          { value: 'no_notes', label: 'Has No Notes' },
+                        ].map((option) =>
+                          optionRow({
+                            checked: selectedNoteFilters.includes(option.value),
+                            itemKey: option.value,
+                            label: option.label,
+                            onClick: () =>
+                              setSelectedNoteFilters((current) =>
+                                current.includes(option.value)
+                                  ? current.filter((value) => value !== option.value)
+                                  : [...current, option.value],
+                              ),
+                            type: 'multiple',
+                          }),
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Scope</span>
-                    <div className="search-panel__option-list">
-                      {optionRow({
-                        checked: selectionScopeFilter,
-                        itemKey: 'selected-subtree',
-                        label: 'Selected and Children',
-                        onClick: () => setSelectionScopeFilter((current) => !current),
-                      })}
+                    <div className="search-panel__filter-group">
+                      <span className="search-panel__filter-label">Photos</span>
+                      <div className="search-panel__option-list">
+                        {photoOptions.map((option) =>
+                          optionRow({
+                            checked: selectedPhotoFilters.includes(option.value),
+                            itemKey: option.value,
+                            label: option.label,
+                            onClick: () =>
+                              setSelectedPhotoFilters((current) =>
+                                current.includes(option.value)
+                                  ? current.filter((value) => value !== option.value)
+                                  : [...current, option.value],
+                              ),
+                            type: 'multiple',
+                          }),
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Tags</span>
-                    <div className="search-panel__option-list search-panel__option-list--scroll">
-                      {tagOptions.map((tag) => (
-                        <button
-                          key={tag}
-                          className={`search-panel__option-button ${
-                            selectedTags.includes(tag) ? 'search-panel__option-button--selected' : ''
-                          }`}
-                          type="button"
-                          onClick={() => {
-                            setSelectedTags((current) =>
-                              current.includes(tag)
-                                ? current.filter((item) => item !== tag)
-                                : [...current, tag],
-                            )
-                          }}
-                        >
-                          <span
-                            aria-hidden="true"
-                            className={`search-panel__option-indicator search-panel__option-indicator--multiple ${
-                              selectedTags.includes(tag) ? 'search-panel__option-indicator--selected' : ''
+                    <div className="search-panel__filter-group">
+                      <span className="search-panel__filter-label">Scope</span>
+                      <div className="search-panel__option-list">
+                        {optionRow({
+                          checked: selectionScopeFilter,
+                          itemKey: 'selected-subtree',
+                          label: 'Selected and Children',
+                          onClick: () => setSelectionScopeFilter((current) => !current),
+                        })}
+                      </div>
+                    </div>
+                    <div className="search-panel__filter-group">
+                      <span className="search-panel__filter-label">Tags</span>
+                      <div className="search-panel__option-list search-panel__option-list--scroll">
+                        {optionRow({
+                          checked: anyTagOnly,
+                          itemKey: '__any_tag__',
+                          label: 'Any',
+                          onClick: () => {
+                            setAnyTagOnly((current) => {
+                              const nextValue = !current
+                              if (nextValue) {
+                                setSelectedTags([])
+                              }
+                              return nextValue
+                            })
+                          },
+                          type: 'multiple',
+                        })}
+                        {tagOptions.map((tag) => (
+                          <button
+                            key={tag}
+                            className={`search-panel__option-button ${
+                              selectedTags.includes(tag) ? 'search-panel__option-button--selected' : ''
                             }`}
-                          />
-                          <span>{tag}</span>
-                        </button>
-                      ))}
+                            type="button"
+                            onClick={() => {
+                              setAnyTagOnly(false)
+                              setSelectedTags((current) =>
+                                current.includes(tag)
+                                  ? current.filter((item) => item !== tag)
+                                  : [...current, tag],
+                              )
+                            }}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`search-panel__option-indicator search-panel__option-indicator--multiple ${
+                                selectedTags.includes(tag) ? 'search-panel__option-indicator--selected' : ''
+                              }`}
+                            />
+                            <span>{tag}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Owner</span>
-                    <div className="search-panel__option-list search-panel__option-list--scroll">
-                      {ownerOptions.map((ownerUsername) => (
-                        <button
-                          key={ownerUsername}
-                          className={`search-panel__option-button ${
-                            selectedOwnerUsernames.includes(ownerUsername) ? 'search-panel__option-button--selected' : ''
-                          }`}
-                          type="button"
-                          onClick={() => {
-                            setSelectedOwnerUsernames((current) =>
-                              current.includes(ownerUsername)
-                                ? current.filter((username) => username !== ownerUsername)
-                                : [...current, ownerUsername],
-                            )
-                          }}
-                        >
-                          <span
-                            aria-hidden="true"
-                            className={`search-panel__option-indicator search-panel__option-indicator--multiple ${
-                              selectedOwnerUsernames.includes(ownerUsername)
-                                ? 'search-panel__option-indicator--selected'
-                                : ''
+                    <div className="search-panel__filter-group">
+                      <span className="search-panel__filter-label">Owner</span>
+                      <div className="search-panel__option-list search-panel__option-list--scroll">
+                        {ownerOptions.map((ownerUsername) => (
+                          <button
+                            key={ownerUsername}
+                            className={`search-panel__option-button ${
+                              selectedOwnerUsernames.includes(ownerUsername) ? 'search-panel__option-button--selected' : ''
                             }`}
-                          />
-                          <span>{ownerUsername}</span>
-                        </button>
-                      ))}
+                            type="button"
+                            onClick={() => {
+                              setSelectedOwnerUsernames((current) =>
+                                current.includes(ownerUsername)
+                                  ? current.filter((username) => username !== ownerUsername)
+                                  : [...current, ownerUsername],
+                              )
+                            }}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`search-panel__option-indicator search-panel__option-indicator--multiple ${
+                                selectedOwnerUsernames.includes(ownerUsername)
+                                  ? 'search-panel__option-indicator--selected'
+                                  : ''
+                              }`}
+                            />
+                            <span>{ownerUsername}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Photos</span>
-                    <div className="search-panel__option-list">
-                      {variantOptions.map((option) =>
-                        optionRow({
-                          checked: variantPresenceFilter === option.value,
-                          itemKey: option.value,
-                          label: option.label,
-                          onClick: () =>
-                            setVariantPresenceFilter((current) => (current === option.value ? '' : option.value)),
-                        }),
-                      )}
-                    </div>
-                  </div>
-                  <div className="search-panel__filter-group">
-                    <span className="search-panel__filter-label">Templates</span>
-                    <div className="search-panel__option-list search-panel__option-list--scroll">
-                      {optionRow({
-                        checked: anyTemplateOnly,
-                        itemKey: '__any__',
-                        label: 'Any',
-                        onClick: () => {
-                          setAnyTemplateOnly((current) => {
-                            const nextValue = !current
-                            if (nextValue) {
-                              setSelectedTemplateIds([])
-                            }
-                            return nextValue
-                          })
-                        },
-                        type: 'multiple',
-                      })}
-                      {(templates || []).map((template) => (
-                        <button
-                          key={template.id}
-                          className={`search-panel__option-button ${
-                            selectedTemplateIds.includes(template.id) ? 'search-panel__option-button--selected' : ''
-                          }`}
-                          type="button"
-                          onClick={() => {
-                            setAnyTemplateOnly(false)
-                            setSelectedTemplateIds((current) =>
-                              current.includes(template.id)
-                                ? current.filter((id) => id !== template.id)
-                                : [...current, template.id],
-                            )
-                          }}
-                        >
-                          <span
-                            aria-hidden="true"
-                            className={`search-panel__option-indicator search-panel__option-indicator--multiple ${
-                              selectedTemplateIds.includes(template.id) ? 'search-panel__option-indicator--selected' : ''
+                    <div className="search-panel__filter-group">
+                      <span className="search-panel__filter-label">Templates</span>
+                      <div className="search-panel__option-list search-panel__option-list--scroll">
+                        {optionRow({
+                          checked: anyTemplateOnly,
+                          itemKey: '__any__',
+                          label: 'Any',
+                          onClick: () => {
+                            setAnyTemplateOnly((current) => {
+                              const nextValue = !current
+                              if (nextValue) {
+                                setSelectedTemplateIds([])
+                              }
+                              return nextValue
+                            })
+                          },
+                          type: 'multiple',
+                        })}
+                        {(templates || []).map((template) => (
+                          <button
+                            key={template.id}
+                            className={`search-panel__option-button ${
+                              selectedTemplateIds.includes(template.id) ? 'search-panel__option-button--selected' : ''
                             }`}
-                          />
-                          <span>{template.name}</span>
-                        </button>
-                      ))}
+                            type="button"
+                            onClick={() => {
+                              setAnyTemplateOnly(false)
+                              setSelectedTemplateIds((current) =>
+                                current.includes(template.id)
+                                  ? current.filter((id) => id !== template.id)
+                                  : [...current, template.id],
+                              )
+                            }}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`search-panel__option-indicator search-panel__option-indicator--multiple ${
+                                selectedTemplateIds.includes(template.id) ? 'search-panel__option-indicator--selected' : ''
+                              }`}
+                            />
+                            <span>{template.name}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
               </div>
             </div>
           </div>

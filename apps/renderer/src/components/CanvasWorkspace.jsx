@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef, useState } from 'react'
+
 import IconButton from './IconButton'
 import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, EyeLowVisionIcon, FitViewIcon, FocusNodeIcon, FolderIcon, GridIcon, RootNodeIcon } from './icons'
 
@@ -30,6 +32,7 @@ export default function CanvasWorkspace({
   searchResultNodeIds,
   selectRootNode,
   selectedNodePath,
+  selectNodeFromPath,
   saveNodeDraft,
   selectedNode,
   selectedNodeId,
@@ -53,11 +56,66 @@ export default function CanvasWorkspace({
   viewportRef,
 }) {
   const searchResultNodeIdSet = hideNonResultNodes ? new Set(searchResultNodeIds || []) : null
-  const selectedPathSeparatorIndex = selectedNodePath.lastIndexOf(' > ')
-  const selectedPathPrefix =
-    selectedPathSeparatorIndex >= 0 ? `${selectedNodePath.slice(0, selectedPathSeparatorIndex)} > ` : ''
-  const selectedPathLeaf =
-    selectedPathSeparatorIndex >= 0 ? selectedNodePath.slice(selectedPathSeparatorIndex + 3) : selectedNodePath
+  const pathContainerRef = useRef(null)
+  const pathMeasureRef = useRef(null)
+  const [visiblePathStart, setVisiblePathStart] = useState(0)
+
+  useLayoutEffect(() => {
+    function recomputeVisiblePath() {
+      const container = pathContainerRef.current
+      const measurer = pathMeasureRef.current
+      if (!container || !measurer || !selectedNodePath?.length) {
+        setVisiblePathStart(0)
+        return
+      }
+
+      const segmentWidths = Array.from(measurer.querySelectorAll('[data-path-segment="true"]')).map((element) =>
+        Math.ceil(element.getBoundingClientRect().width),
+      )
+      const ellipsisWidth = Math.ceil(
+        measurer.querySelector('[data-path-ellipsis="true"]')?.getBoundingClientRect().width || 0,
+      )
+      const availableWidth = Math.floor(container.parentElement?.getBoundingClientRect().width || 0)
+
+      if (!segmentWidths.length || availableWidth <= 0) {
+        setVisiblePathStart(0)
+        return
+      }
+
+      let startIndex = segmentWidths.length - 1
+      let usedWidth = segmentWidths[startIndex] || 0
+      while (startIndex > 0 && usedWidth + segmentWidths[startIndex - 1] <= availableWidth) {
+        startIndex -= 1
+        usedWidth += segmentWidths[startIndex]
+      }
+
+      if (startIndex > 0) {
+        while (startIndex < segmentWidths.length - 1 && usedWidth + ellipsisWidth > availableWidth) {
+          usedWidth -= segmentWidths[startIndex]
+          startIndex += 1
+        }
+      }
+
+      setVisiblePathStart(startIndex)
+    }
+
+    recomputeVisiblePath()
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' && pathContainerRef.current
+        ? new ResizeObserver(() => recomputeVisiblePath())
+        : null
+    if (resizeObserver && pathContainerRef.current) {
+      resizeObserver.observe(pathContainerRef.current)
+    }
+    window.addEventListener('resize', recomputeVisiblePath)
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', recomputeVisiblePath)
+    }
+  }, [selectedNodeId, selectedNodePath])
+
+  const visiblePath = selectedNodePath.slice(visiblePathStart)
+  const showLeadingEllipsis = visiblePathStart > 0
 
   return (
     <section
@@ -344,10 +402,40 @@ export default function CanvasWorkspace({
         </div>
       ) : null}
       <div className="canvas-caption canvas-caption--left">
-        {selectedNodePath ? (
+        {selectedNodePath?.length ? (
           <>
-            {selectedPathPrefix ? <span>{selectedPathPrefix}</span> : null}
-            <span className="canvas-caption__selected">{selectedPathLeaf}</span>
+            <div ref={pathContainerRef} className="canvas-caption__path" role="navigation" aria-label="Selected node path">
+              {showLeadingEllipsis ? <span className="canvas-caption__ellipsis">...</span> : null}
+              {visiblePath.map((entry, index) => (
+                <span key={entry.id} className="canvas-caption__segment">
+                  {showLeadingEllipsis || index > 0 ? <span className="canvas-caption__separator">{'>'}</span> : null}
+                  <button
+                    className={`canvas-caption__node ${entry.id === selectedNodePath[selectedNodePath.length - 1]?.id ? 'is-selected' : ''}`}
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      void selectNodeFromPath(entry.id)
+                    }}
+                    type="button"
+                  >
+                    {entry.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div ref={pathMeasureRef} className="canvas-caption__path-measure" aria-hidden="true">
+              <span className="canvas-caption__ellipsis" data-path-ellipsis="true">...</span>
+              {selectedNodePath.map((entry, index) => (
+                <span key={entry.id} className="canvas-caption__segment" data-path-segment="true">
+                  {index > 0 ? <span className="canvas-caption__separator">{'>'}</span> : null}
+                  <span className="canvas-caption__node">{entry.name}</span>
+                </span>
+              ))}
+            </div>
           </>
         ) : (
           'No node selected'

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+const RESERVED_TAGS = new Set(['any'])
+
 function normalizeTags(tags) {
   if (!Array.isArray(tags)) {
     return []
@@ -10,7 +12,7 @@ function normalizeTags(tags) {
   for (const tag of tags) {
     const normalized = String(tag || '').trim()
     const key = normalized.toLowerCase()
-    if (!normalized || seen.has(key)) {
+    if (!normalized || RESERVED_TAGS.has(key) || seen.has(key)) {
       continue
     }
     seen.add(key)
