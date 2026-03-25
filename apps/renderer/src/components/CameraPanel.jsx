@@ -12,8 +12,8 @@ export default function CameraPanel({
   setSelectedCameraId,
   setSelectedCameraTemplateId,
 }) {
-  async function handleCapture(mode = 'child') {
-    await captureFullCameraFrame(mode, {
+  async function handleCapture() {
+    await captureFullCameraFrame('variant', {
       templateId: selectedCameraTemplateId || null,
     })
   }
@@ -45,34 +45,21 @@ export default function CameraPanel({
         </label>
         <div className="camera-panel__hint">
           {selectedNode
-            ? selectedNode.isVariant
-              ? `Capture target: ${selectedNode.name} (variant anchor)`
-              : `Capture target: ${selectedNode.name}`
+            ? `Capture target: ${selectedNode.name}`
             : 'Select a node to capture into.'}
         </div>
         <div className="camera-panel__actions">
           <button
             className="primary-button wide"
-            disabled={!selectedNode || selectedNode.isVariant || busy}
+            disabled={!selectedNode || busy}
             onClick={() => void handleCapture()}
             type="button"
           >
-            Take Photo
-          </button>
-          <button
-            className="ghost-button wide"
-            disabled={!selectedNode || busy}
-            onClick={() => void handleCapture('variant')}
-            type="button"
-          >
-            Take Variant Photo
+            Add Photo
           </button>
         </div>
       </div>
-      <div
-        ref={cameraViewportRef}
-        className={`camera-viewport ${selectedNode?.isVariant ? 'disabled' : ''}`}
-      >
+      <div ref={cameraViewportRef} className="camera-viewport">
         <video ref={cameraVideoRef} autoPlay className="camera-video" muted playsInline />
       </div>
       <div className="inspector__notice">{cameraNotice || 'Capture a photo into the selected node.'}</div>

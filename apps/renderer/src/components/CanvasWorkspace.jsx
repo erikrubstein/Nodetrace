@@ -1,5 +1,5 @@
 import IconButton from './IconButton'
-import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, EyeLowVisionIcon, FitViewIcon, FocusNodeIcon, FolderIcon, GridIcon, RootNodeIcon } from './icons'
+import { AddFolderIcon, AddPhotoIcon, EyeLowVisionIcon, FitViewIcon, FocusNodeIcon, FolderIcon, GridIcon, RootNodeIcon } from './icons'
 
 export default function CanvasWorkspace({
   beginNodeDrag,
@@ -123,7 +123,7 @@ export default function CanvasWorkspace({
         <IconButton
           aria-label="Add folder"
           className="canvas-tool-button"
-          disabled={!selectedNode || selectedNode.isVariant || busy}
+          disabled={!selectedNode || busy}
           onClick={() => openNewFolderDialog()}
           tooltip="Add Folder"
         >
@@ -132,28 +132,15 @@ export default function CanvasWorkspace({
         <IconButton
           aria-label="Add photo"
           className="canvas-tool-button"
-          disabled={!selectedNode || selectedNode.isVariant || busy}
-          onClick={() => {
-            setPendingUploadParentId(selectedNode?.id || null)
-            setPendingUploadMode('child')
-            fileInputRef.current?.click()
-          }}
-          tooltip="Add Photo"
-        >
-          <AddPhotoIcon />
-        </IconButton>
-        <IconButton
-          aria-label="Add variant photo"
-          className="canvas-tool-button"
           disabled={!selectedNode || busy}
           onClick={() => {
             setPendingUploadParentId(selectedNode?.id || null)
             setPendingUploadMode('variant')
             fileInputRef.current?.click()
           }}
-          tooltip="Add Variant Photo"
+          tooltip="Add Photo"
         >
-          <AddVariantIcon />
+          <AddPhotoIcon />
         </IconButton>
       </div>
       <div className="canvas-tools canvas-tools--right">
@@ -397,7 +384,7 @@ export default function CanvasWorkspace({
               }}
               onClick={() => {
                 setPendingUploadParentId(contextMenu.nodeId)
-                setPendingUploadMode('child')
+                setPendingUploadMode('variant')
                 setContextMenu(null)
                 fileInputRef.current?.click()
               }}
@@ -406,21 +393,6 @@ export default function CanvasWorkspace({
               Add Photo
             </button>
           ) : null}
-          <button
-            onPointerDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-            onClick={() => {
-              setPendingUploadParentId(contextMenu.nodeId)
-              setPendingUploadMode('variant')
-              setContextMenu(null)
-              fileInputRef.current?.click()
-            }}
-            type="button"
-          >
-            Add Variant Photo
-          </button>
           {!focusPathMode &&
           !contextMenuNode?.isVariant &&
           (contextMenuNode?.children?.length || contextMenuNode?.collapsed) ? (

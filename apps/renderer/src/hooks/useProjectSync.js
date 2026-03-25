@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { ApiError, api } from '../lib/api'
 import { getUrlState, updateUrlState } from '../lib/urlState'
 import { debugLog } from '../lib/debug'
+import { normalizeServerTree } from '../lib/tree'
 
 export default function useProjectSync({
   captureSessionId,
@@ -66,21 +67,22 @@ export default function useProjectSync({
 
       const requestSequence = ++treeRequestSequenceRef.current
       const payload = await api(`/api/projects/${projectId}/tree`)
+      const nextTree = normalizeServerTree(payload)
       if (requestSequence !== treeRequestSequenceRef.current) {
         debugLog('loadTree ignored stale response', { projectId, preferredNodeId, requestSequence })
-        return payload
+        return nextTree
       }
       const resolvedNodeId =
-        preferredNodeId && payload.nodes.some((node) => node.id === preferredNodeId)
+        preferredNodeId && nextTree?.nodes?.some((node) => node.id === preferredNodeId)
           ? preferredNodeId
-          : payload.root?.id ?? null
+          : nextTree?.root?.id ?? null
       debugLog('loadTree resolved selection', {
         projectId,
         preferredNodeId,
         resolvedNodeId,
-        rootNodeId: payload.root?.id ?? null,
+        rootNodeId: nextTree?.root?.id ?? null,
       })
-      setTree(payload)
+      setTree(nextTree)
       setSelectedNodeId(resolvedNodeId)
     },
     [setSelectedNodeId, setTree],

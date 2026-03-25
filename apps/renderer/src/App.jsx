@@ -42,6 +42,7 @@ import {
   findNode,
   flattenSubtreeNodes,
   getSelectionRootIds,
+  normalizeServerTree,
 } from './lib/tree'
 import { getUrlState, updateUrlState } from './lib/urlState'
 import { debugEnabled, debugLog } from './lib/debug'
@@ -181,6 +182,9 @@ function App() {
   const pendingFocusNodeIdRef = useRef(null)
   const presenceRequestSequenceRef = useRef(0)
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
+  const applyTreePayload = useCallback((payload) => {
+    setTree(normalizeServerTree(payload))
+  }, [])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -1808,7 +1812,7 @@ function App() {
       setProjectName('')
       setShowProjectDialog(null)
       setOpenMenu(null)
-      setTree(created)
+      applyTreePayload(created)
       await loadProjects(created.project.id)
       setSelectedNodeId(created.root.id)
     } catch (submitError) {
@@ -1917,7 +1921,7 @@ function App() {
     if (response?.ok === false) {
       throw new Error(response.error || 'Unable to save template')
     }
-    setTree(response.tree)
+    applyTreePayload(response.tree)
     applyProjectUpdate(response.tree.project)
     return response.tree
   }
@@ -1929,7 +1933,7 @@ function App() {
     if (response?.ok === false) {
       throw new Error(response.error || 'Unable to delete template')
     }
-    setTree(response.tree)
+    applyTreePayload(response.tree)
     applyProjectUpdate(response.tree.project)
     return response.tree
   }
@@ -2585,7 +2589,7 @@ function App() {
         body: JSON.stringify({ name }),
       })
 
-      setTree(updatedTree)
+      applyTreePayload(updatedTree)
       setProjects((current) =>
         current.map((project) => (project.id === updatedTree.project.id ? updatedTree.project : project)),
       )
@@ -2709,7 +2713,7 @@ function App() {
 
       const importedTree = await uploadWithProgress('/api/projects/import', formData, setTransferProgress)
 
-      setTree(importedTree)
+      applyTreePayload(importedTree)
       setSelectedProjectId(importedTree.project.id)
       setSelectedNodeId(importedTree.root?.id ?? null)
       setImportArchiveFile(null)
@@ -2802,21 +2806,16 @@ function App() {
   }
 
   function triggerAddPhoto() {
-    if (!selectedNode || selectedNode.isVariant || busy) {
-      return
-    }
-    setPendingUploadParentId(selectedNode.id)
-    setPendingUploadMode('child')
-    fileInputRef.current?.click()
-  }
-
-  function triggerAddVariantPhoto() {
     if (!selectedNode || busy) {
       return
     }
     setPendingUploadParentId(selectedNode.id)
     setPendingUploadMode('variant')
     fileInputRef.current?.click()
+  }
+
+  function triggerAddVariantPhoto() {
+    triggerAddPhoto()
   }
 
   async function uploadFiles(files, targetNodeId = selectedNode?.id, mode = 'child', options = {}) {
@@ -2839,8 +2838,12 @@ function App() {
           throw error
         }
         createdNodeIds = createdNodes.map((node) => node.id)
-        appendNodesToTree(createdNodes)
-        updateProjectListNodeCount(createdNodes.length)
+        if (mode === 'variant') {
+          await loadTree(selectedProjectId, targetNodeId)
+        } else {
+          appendNodesToTree(createdNodes)
+          updateProjectListNodeCount(createdNodes.length)
+        }
         setSelectedNodeId(selectedNodeId)
       }
 
@@ -2856,8 +2859,12 @@ function App() {
             rollbackUndoEvent()
             throw error
           }
-          removeNodesFromTree(createdNodeIds)
-          updateProjectListNodeCount(-createdNodeIds.length)
+          if (mode === 'variant') {
+            await loadTree(selectedProjectId, targetNodeId)
+          } else {
+            removeNodesFromTree(createdNodeIds)
+            updateProjectListNodeCount(-createdNodeIds.length)
+          }
           setSelectedNodeId(selectedNodeId)
         },
         redo: async () => {

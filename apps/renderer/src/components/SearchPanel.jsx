@@ -15,14 +15,13 @@ const noteOptions = [
 ]
 
 const typeOptions = [
-  { value: 'folder', label: 'Folder' },
-  { value: 'photo', label: 'Photo' },
-  { value: 'variant', label: 'Variant Photo' },
+  { value: 'with_photo', label: 'With Photo' },
+  { value: 'without_photo', label: 'Without Photo' },
 ]
 
 const variantOptions = [
-  { value: 'has_variants', label: 'Has Variants' },
-  { value: 'no_variants', label: 'No Variants' },
+  { value: 'multiple_photos', label: 'Multiple Photos' },
+  { value: 'single_or_none', label: 'Single or No Photos' },
 ]
 
 function optionRow({ checked, itemKey, label, onClick, type = 'single' }) {
@@ -166,23 +165,14 @@ export default function SearchPanel({
         if (!typeFilter) {
           return true
         }
-        if (typeFilter === 'variant') {
-          return Boolean(node.isVariant)
-        }
-        if (typeFilter === 'folder') {
-          return node.type === 'folder' && !node.isVariant
-        }
-        if (typeFilter === 'photo') {
-          return node.type === 'photo' && !node.isVariant
-        }
-        return true
+        return typeFilter === 'with_photo' ? Boolean(node.hasImage) : !node.hasImage
       })
       .filter((node) => {
         if (!variantPresenceFilter) {
           return true
         }
-        const hasVariants = Boolean(node.variants?.length)
-        return variantPresenceFilter === 'has_variants' ? hasVariants : !hasVariants
+        const hasMultiplePhotos = Number(node.mediaCount || 0) > 1
+        return variantPresenceFilter === 'multiple_photos' ? hasMultiplePhotos : !hasMultiplePhotos
       })
       .filter((node) => !selectedOwnerUsernames.length || selectedOwnerUsernames.includes(node.ownerUsername))
       .sort((left, right) => {

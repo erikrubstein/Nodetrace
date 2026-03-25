@@ -578,7 +578,7 @@ export default function PreviewPanel({
         </>
       ) : (
         <div className="inspector__section">
-          <div className="inspector__empty">Select a photo to preview the full-resolution image.</div>
+          <div className="inspector__empty">Select a node with a photo to preview the full-resolution image.</div>
         </div>
       )}
     </div>

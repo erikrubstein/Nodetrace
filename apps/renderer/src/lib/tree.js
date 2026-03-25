@@ -642,18 +642,11 @@ export function compactNodePath(path, options = {}) {
 }
 
 export function buildClientTree(project, rows) {
-  const byId = new Map(rows.map((node) => [node.id, { ...node, children: [], variants: [] }]))
+  const normalizedRows = (rows || []).filter((node) => !node?.isVariant && node?.variant_of_id == null)
+  const byId = new Map(normalizedRows.map((node) => [node.id, { ...node, children: [], variants: [] }]))
   let root = null
 
   for (const node of byId.values()) {
-    if (node.variant_of_id != null) {
-      const anchor = byId.get(node.variant_of_id)
-      if (anchor) {
-        anchor.variants.push(node)
-      }
-      continue
-    }
-
     if (node.parent_id == null) {
       root = node
       continue
@@ -670,4 +663,11 @@ export function buildClientTree(project, rows) {
     root,
     nodes: Array.from(byId.values()),
   }
+}
+
+export function normalizeServerTree(payload) {
+  if (!payload) {
+    return null
+  }
+  return buildClientTree(payload.project, payload.nodes || [])
 }

@@ -26,13 +26,7 @@ export default function InspectorPanel({
           {hasBulkSelection
             ? 'Selection'
             : selectedNode
-            ? selectedNode.isVariant
-              ? selectedNode.type === 'photo'
-                ? 'Variant Photo'
-                : 'Variant Folder'
-              : selectedNode.type === 'photo'
-                ? 'Photo'
-                : 'Folder'
+            ? 'Node'
             : 'Selection'}
         </div>
         {selectedNode ? (
@@ -121,6 +115,10 @@ export default function InspectorPanel({
 
           {!hasBulkSelection ? (
             <div className="inspector__section inspector__footer">
+              <div className="settings-panel__meta-row">
+                <span>Photos</span>
+                <strong>{Math.max(0, Number(selectedNode.mediaCount || 0))}</strong>
+              </div>
               <div className="settings-panel__meta-row">
                 <span>Node Owner</span>
                 <strong>{selectedNode.ownerUsername || 'Unknown'}</strong>

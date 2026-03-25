@@ -405,7 +405,7 @@ const listAccessibleProjects = db.prepare(`
   SELECT
     p.*,
     owner.username AS owner_username,
-    COUNT(n.id) AS node_count,
+    COUNT(CASE WHEN n.variant_of_id IS NULL THEN 1 END) AS node_count,
     CASE WHEN p.owner_user_id = @user_id THEN 1 ELSE 0 END AS is_owner
   FROM projects p
   LEFT JOIN nodes n ON n.project_id = p.id

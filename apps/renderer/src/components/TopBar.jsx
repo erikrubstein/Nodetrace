@@ -48,7 +48,6 @@ export default function TopBar({
   searchResultCount,
   theme,
   triggerAddPhoto,
-  triggerAddVariantPhoto,
   toggleTheme,
   tree,
   undo,
@@ -190,7 +189,7 @@ export default function TopBar({
               </button>
               <button
                 className="menu-item"
-                disabled={!selectedNode || selectedNode.isVariant || busy}
+                disabled={!selectedNode || busy}
                 onClick={() => {
                   setOpenMenu(null)
                   triggerAddPhoto()
@@ -198,17 +197,6 @@ export default function TopBar({
                 type="button"
               >
                 Add Photo
-              </button>
-              <button
-                className="menu-item"
-                disabled={!selectedNode || busy}
-                onClick={() => {
-                  setOpenMenu(null)
-                  triggerAddVariantPhoto()
-                }}
-                type="button"
-              >
-                Add Variant Photo
               </button>
               <button
                 className="menu-item"
