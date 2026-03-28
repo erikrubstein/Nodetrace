@@ -30,6 +30,82 @@ export function importRestorePayloadRoutes(app, ctx) {
     assertIdentificationTemplateAccess,
   } = ctx
 
+  function resolvePhotoUploadIntent(body) {
+    const uploadMode = String(body.uploadMode || body.mode || '').trim().toLowerCase()
+    const additionalPhotoRequested =
+      uploadMode === 'additional_photo' ||
+      String(body.additionalPhoto || '').trim() === 'true' ||
+      String(body.variant || '').trim() === 'true'
+    const additionalPhotoOfId =
+      body.additionalPhotoOfId != null
+        ? String(body.additionalPhotoOfId).trim()
+        : body.variantOfId != null
+          ? String(body.variantOfId).trim()
+          : null
+
+    return { additionalPhotoRequested, additionalPhotoOfId }
+  }
+
+  function handleCreateNode(req, res, next) {
+    try {
+      const project = assertProjectAccess(req.params.id, req.user.id)
+      const projectId = project.id
+
+      const clientId = String(req.body.clientId || '').trim()
+      let parentId = String(req.body.parentId || '').trim() || null
+      if (!parentId && clientId) {
+        if (clientId !== req.user.captureSessionId) {
+          return res.status(403).json({ error: 'Session mismatch' })
+        }
+        const controllingClient = getDesktopSession(clientId)
+        if (!controllingClient) {
+          return res.status(400).json({ error: 'Selected client is not active' })
+        }
+        if (controllingClient.projectId !== projectId) {
+          return res.status(400).json({ error: 'Selected client is controlling a different project' })
+        }
+        parentId = controllingClient.selectedNodeId
+      }
+
+      const parentNode = assertNode(parentId)
+      ensureNodeBelongsToProject(parentNode, projectId)
+      ensureCanHaveChildren(parentNode)
+
+      const name = String(req.body.name || '').trim()
+      if (!name) {
+        return res.status(400).json({ error: 'Node name is required' })
+      }
+
+      const nodeId = createNode({
+        project_id: projectId,
+        owner_user_id: req.user.id,
+        parent_id: parentNode.id,
+        variant_of_id: null,
+        type: 'folder',
+        name,
+        notes: String(req.body.notes || '').trim(),
+        tags: parseTags(req.body.tags),
+        image_path: null,
+        preview_path: null,
+        original_filename: null,
+      })
+      const now = new Date().toISOString()
+      upsertUserNodeCollapsePreference.run({
+        user_id: req.user.id,
+        project_id: projectId,
+        node_id: nodeId,
+        collapsed: 0,
+        created_at: now,
+        updated_at: now,
+      })
+
+      broadcastProjectEvent(projectId)
+      res.status(201).json(serializeNodeForUser(assertNode(nodeId), req.user.id))
+    } catch (error) {
+      next(error)
+    }
+  }
+
   app.get('/api/projects/:id/export', requireAuth, (req, res, next) => {
     let archivePath = null
 
@@ -156,65 +232,8 @@ export function importRestorePayloadRoutes(app, ctx) {
     }
   })
 
-  app.post('/api/projects/:id/folders', requireAuth, (req, res, next) => {
-    try {
-      const project = assertProjectAccess(req.params.id, req.user.id)
-      const projectId = project.id
-
-      const clientId = String(req.body.clientId || '').trim()
-      let parentId = String(req.body.parentId || '').trim() || null
-      if (!parentId && clientId) {
-        if (clientId !== req.user.captureSessionId) {
-          return res.status(403).json({ error: 'Session mismatch' })
-        }
-        const controllingClient = getDesktopSession(clientId)
-        if (!controllingClient) {
-          return res.status(400).json({ error: 'Selected client is not active' })
-        }
-        if (controllingClient.projectId !== projectId) {
-          return res.status(400).json({ error: 'Selected client is controlling a different project' })
-        }
-        parentId = controllingClient.selectedNodeId
-      }
-
-      const parentNode = assertNode(parentId)
-      ensureNodeBelongsToProject(parentNode, projectId)
-      ensureCanHaveChildren(parentNode)
-
-      const name = String(req.body.name || '').trim()
-      if (!name) {
-        return res.status(400).json({ error: 'Folder name is required' })
-      }
-
-      const nodeId = createNode({
-        project_id: projectId,
-        owner_user_id: req.user.id,
-        parent_id: parentNode.id,
-        variant_of_id: null,
-        type: 'folder',
-        name,
-        notes: String(req.body.notes || '').trim(),
-        tags: parseTags(req.body.tags),
-        image_path: null,
-        preview_path: null,
-        original_filename: null,
-      })
-      const now = new Date().toISOString()
-      upsertUserNodeCollapsePreference.run({
-        user_id: req.user.id,
-        project_id: projectId,
-        node_id: nodeId,
-        collapsed: 0,
-        created_at: now,
-        updated_at: now,
-      })
-
-      broadcastProjectEvent(projectId)
-      res.status(201).json(serializeNodeForUser(assertNode(nodeId), req.user.id))
-    } catch (error) {
-      next(error)
-    }
-  })
+  app.post('/api/projects/:id/folders', requireAuth, handleCreateNode)
+  app.post('/api/projects/:id/nodes', requireAuth, handleCreateNode)
 
   app.post('/api/projects/:id/photos', requireAuth, ctx.upload.fields([{ name: 'file', maxCount: 1 }, { name: 'preview', maxCount: 1 }]), (req, res, next) => {
     try {
@@ -222,9 +241,9 @@ export function importRestorePayloadRoutes(app, ctx) {
       const projectId = project.id
 
       const clientId = String(req.body.clientId || '').trim()
-      const variantRequested = String(req.body.variant || '').trim() === 'true'
+      const { additionalPhotoRequested, additionalPhotoOfId } = resolvePhotoUploadIntent(req.body)
       let parentId = String(req.body.parentId || '').trim() || null
-      let variantOfId = req.body.variantOfId != null ? String(req.body.variantOfId).trim() : null
+      let variantOfId = additionalPhotoOfId
       if (!parentId && clientId) {
         if (clientId !== req.user.captureSessionId) {
           return res.status(403).json({ error: 'Session mismatch' })
@@ -236,14 +255,14 @@ export function importRestorePayloadRoutes(app, ctx) {
         if (controllingClient.projectId !== projectId) {
           return res.status(400).json({ error: 'Selected client is controlling a different project' })
         }
-        if (variantRequested) {
+        if (additionalPhotoRequested) {
           variantOfId = controllingClient.selectedNodeId
         } else {
           parentId = controllingClient.selectedNodeId
         }
       }
 
-      if (variantRequested || variantOfId) {
+      if (additionalPhotoRequested || variantOfId) {
         const rawAnchorNode = assertNode(variantOfId)
         ensureNodeBelongsToProject(rawAnchorNode, projectId)
         const anchorNode = resolveVariantAnchor(rawAnchorNode)
@@ -333,11 +352,11 @@ export function importRestorePayloadRoutes(app, ctx) {
 
       const project = assertProject(session.projectId)
       const projectId = project.id
-      const variantRequested = String(req.body.variant || '').trim() === 'true'
+      const { additionalPhotoRequested } = resolvePhotoUploadIntent(req.body)
       let parentId = session.selectedNodeId
       let variantOfId = null
 
-      if (variantRequested) {
+      if (additionalPhotoRequested) {
         const rawAnchorNode = assertNode(session.selectedNodeId)
         ensureNodeBelongsToProject(rawAnchorNode, projectId)
         const anchorNode = resolveVariantAnchor(rawAnchorNode)

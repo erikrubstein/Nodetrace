@@ -308,7 +308,7 @@ export default function useWorkspaceInteractions({
     setCameraSelection(selection)
   }, [setCameraSelection])
 
-  async function captureFullCameraFrame(mode = 'child', options = {}) {
+  async function captureFullCameraFrame(mode = 'photo_node', options = {}) {
     const video = cameraVideoRef.current
     if (!video?.videoWidth || !video?.videoHeight) {
       setCameraNotice('Camera frame is not ready yet.')
@@ -334,7 +334,7 @@ export default function useWorkspaceInteractions({
     const file = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' })
     setCameraNotice('Uploading photo...')
     await uploadFiles([file], selectedNode.id, mode, options)
-    setCameraNotice('Photo added.')
+    setCameraNotice(mode === 'additional_photo' ? 'Additional photo added.' : 'Photo node created.')
   }
 
   useEffect(() => {

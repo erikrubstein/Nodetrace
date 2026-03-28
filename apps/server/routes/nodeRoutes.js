@@ -375,7 +375,12 @@ export function registerNodeRoutes(app, ctx) {
     try {
       const node = assertNodeAccess(req.params.id, req.user.id)
       ensureNotRoot(node)
-      const variantOfId = req.body.variantOfId != null ? String(req.body.variantOfId).trim() : null
+      const variantOfId =
+        req.body.additionalPhotoOfId != null
+          ? String(req.body.additionalPhotoOfId).trim()
+          : req.body.variantOfId != null
+            ? String(req.body.variantOfId).trim()
+            : null
       let parentId = req.body.parentId != null ? String(req.body.parentId).trim() : null
 
       if (variantOfId) {
@@ -384,7 +389,7 @@ export function registerNodeRoutes(app, ctx) {
         ensureNodeBelongsToProject(requestedAnchor, node.project_id)
         const anchorNode = resolveVariantAnchor(requestedAnchor)
         if (anchorNode.id === node.id) {
-          return res.status(400).json({ error: 'A node cannot be a variant of itself' })
+          return res.status(400).json({ error: 'A node cannot become an additional photo of itself' })
         }
         parentId = anchorNode.parent_id
         moveNode({
@@ -421,7 +426,7 @@ export function registerNodeRoutes(app, ctx) {
     try {
       const node = assertNodeAccess(req.params.id, req.user.id)
       if (!node.variant_of_id) {
-        return res.status(400).json({ error: 'Only variant nodes can be promoted' })
+        return res.status(400).json({ error: 'Only additional photos can be promoted to primary' })
       }
 
       const anchorNode = assertNode(node.variant_of_id)

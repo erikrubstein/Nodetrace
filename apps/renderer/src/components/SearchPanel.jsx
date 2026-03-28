@@ -193,6 +193,14 @@ export default function SearchPanel({
       selectionScopeSeedIds.filter((nodeId, index, current) => current.indexOf(nodeId) === index).length,
     [selectionScopeSeedIds],
   )
+  const pinnedScopeNames = useMemo(
+    () =>
+      selectionScopeSeedIds
+        .map((nodeId) => (tree?.nodes || []).find((node) => node.id === nodeId)?.name)
+        .filter(Boolean)
+        .slice(0, 3),
+    [selectionScopeSeedIds, tree?.nodes],
+  )
 
   const results = useMemo(() => {
     const loweredQuery = query.trim().toLowerCase()
@@ -596,6 +604,40 @@ export default function SearchPanel({
             </div>
           </div>
         </label>
+        {selectionScopeFilter && pinnedScopeCount ? (
+          <div className="search-panel__scope-summary">
+            <span>
+              Scoped to {pinnedScopeCount} pinned node{pinnedScopeCount === 1 ? '' : 's'}
+              {pinnedScopeNames.length ? `: ${pinnedScopeNames.join(', ')}${pinnedScopeCount > pinnedScopeNames.length ? ', ...' : ''}` : ''}
+            </span>
+            <div className="search-panel__scope-summary-actions">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  const snapshotIds = Array.from(new Set((selectedNodeIds || []).filter(Boolean)))
+                  if (!snapshotIds.length) {
+                    return
+                  }
+                  setSelectionScopeSeedIds(snapshotIds)
+                  setSelectionScopeFilter(true)
+                }}
+              >
+                Recapture
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setSelectionScopeFilter(false)
+                  setSelectionScopeSeedIds([])
+                }}
+              >
+                Clear Scope
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="search-panel__sort-grid">
           <label>
             <span>Sort by</span>

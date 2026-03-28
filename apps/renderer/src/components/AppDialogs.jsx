@@ -515,7 +515,7 @@ export default function AppDialogs({
               onChange={(event) => setExportFileName(event.target.value.replace(/\.zip$/i, ''))}
             />
             <div className="inspector__notice">
-              Exports normal folders and full-resolution photos as {`${exportFileName || `${tree?.project?.name || 'project'}-media`}.zip`}
+              Exports the current node tree as folders with full-resolution photos in {`${exportFileName || `${tree?.project?.name || 'project'}-media`}.zip`}
             </div>
             <progress className="transfer-progress" max="100" value={transferProgress ?? undefined} />
             <div className="dialog__actions">
@@ -897,6 +897,9 @@ export default function AppDialogs({
             role="dialog"
           >
             <div className="dialog__title">Import Template</div>
+            <div className="inspector__notice">
+              Imports a copied local template into the current project. This does not create a live link back to the source project.
+            </div>
             <label>
               <span>Project</span>
               <select

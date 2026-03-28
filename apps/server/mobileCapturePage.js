@@ -269,7 +269,7 @@ export function renderMobileCapturePage() {
       const statusEl = document.getElementById('status')
       const search = new URLSearchParams(window.location.search)
       let pollHandle = null
-      let uploadMode = 'child'
+      let uploadMode = 'photo_node'
       let sessionInfo = null
       let hasConnectedSession = false
       const connectionId = (window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 12)).toLowerCase()
@@ -446,7 +446,10 @@ export function renderMobileCapturePage() {
           for (const file of files) {
             const previewFile = await createPreviewFile(file)
             const formData = new FormData()
-            formData.append('variant', uploadMode === 'variant' ? 'true' : 'false')
+            formData.append('uploadMode', uploadMode)
+            if (uploadMode === 'additional_photo') {
+              formData.append('additionalPhoto', 'true')
+            }
             formData.append('name', '<untitled>')
             formData.append('notes', '')
             formData.append('tags', '')
@@ -495,13 +498,13 @@ export function renderMobileCapturePage() {
       })
 
       variantButton.addEventListener('click', () => {
-        uploadMode = 'variant'
+        uploadMode = 'additional_photo'
         captureInput.setAttribute('capture', 'environment')
         captureInput.click()
       })
 
       chooseChildButton.addEventListener('click', () => {
-        uploadMode = 'child'
+        uploadMode = 'photo_node'
         captureInput.removeAttribute('capture')
         captureInput.click()
         window.setTimeout(() => {
@@ -510,7 +513,7 @@ export function renderMobileCapturePage() {
       })
 
       chooseVariantButton.addEventListener('click', () => {
-        uploadMode = 'variant'
+        uploadMode = 'additional_photo'
         captureInput.removeAttribute('capture')
         captureInput.click()
         window.setTimeout(() => {
@@ -519,7 +522,7 @@ export function renderMobileCapturePage() {
       })
 
       document.querySelector('.capture-button').addEventListener('click', () => {
-        uploadMode = 'child'
+        uploadMode = 'photo_node'
       })
 
       disconnectButton.addEventListener('click', () => {

@@ -4,6 +4,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const rendererDir = fileURLToPath(new URL('.', import.meta.url))
+const apiBaseUrl = process.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001'
+const host = process.env.VITE_HOST || '0.0.0.0'
+const port = Number(process.env.VITE_PORT || 5173)
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -14,13 +17,13 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    host: '0.0.0.0',
-    port: 5173,
+    host,
+    port,
     strictPort: true,
     proxy: {
-      '/capture': 'http://127.0.0.1:3001',
-      '/api': 'http://127.0.0.1:3001',
-      '/uploads': 'http://127.0.0.1:3001',
+      '/capture': apiBaseUrl,
+      '/api': apiBaseUrl,
+      '/uploads': apiBaseUrl,
     },
   },
 })

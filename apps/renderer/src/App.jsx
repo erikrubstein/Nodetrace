@@ -139,7 +139,7 @@ function App() {
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(defaultUserProjectUi.leftSidebarWidth)
   const [rightSidebarWidth, setRightSidebarWidth] = useState(defaultUserProjectUi.rightSidebarWidth)
   const [pendingUploadParentId, setPendingUploadParentId] = useState(null)
-  const [pendingUploadMode, setPendingUploadMode] = useState('child')
+  const [pendingUploadMode, setPendingUploadMode] = useState('photo_node')
   const [cameraDevices, setCameraDevices] = useState([])
   const [selectedCameraId, setSelectedCameraId] = useState('')
   const [selectedCameraTemplateId, setSelectedCameraTemplateId] = useState('')
@@ -1435,8 +1435,8 @@ function App() {
     }
   }
 
-  async function createFolderRequest(projectId, parentId, payload = {}) {
-    return api(`/api/projects/${projectId}/folders`, {
+  async function createNodeRequest(projectId, parentId, payload = {}) {
+    return api(`/api/projects/${projectId}/nodes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1489,17 +1489,19 @@ function App() {
     return api(`/api/nodes/${nodeId}`, { method: 'DELETE' })
   }
 
-  async function uploadPhotoFilesRequest(projectId, files, targetNodeId, mode = 'child', options = {}) {
+  async function uploadPhotoFilesRequest(projectId, files, targetNodeId, mode = 'photo_node', options = {}) {
     const createdNodes = []
 
     for (const file of files) {
       const previewFile = await createPreviewFile(file)
       const formData = new FormData()
-      if (mode === 'variant') {
-        formData.append('variantOfId', targetNodeId)
-        formData.append('variant', 'true')
+      if (mode === 'additional_photo') {
+        formData.append('additionalPhotoOfId', targetNodeId)
+        formData.append('additionalPhoto', 'true')
+        formData.append('uploadMode', 'additional_photo')
       } else {
         formData.append('parentId', targetNodeId)
+        formData.append('uploadMode', 'photo_node')
       }
       formData.append('name', '<untitled>')
       formData.append('notes', '')
@@ -1699,9 +1701,9 @@ function App() {
 
         const beforePayload =
           node.variant_of_id != null
-            ? { variantOfId: node.variant_of_id }
-            : { parentId: node.parent_id, variantOfId: null }
-        const afterPayload = { parentId, variantOfId: null }
+            ? { additionalPhotoOfId: node.variant_of_id }
+            : { parentId: node.parent_id, additionalPhotoOfId: null }
+        const afterPayload = { parentId, additionalPhotoOfId: null }
         const rollbackLocalEvent = beginLocalEventExpectation()
         let updatedNode = null
         try {
@@ -2944,41 +2946,41 @@ function App() {
     setError('')
 
     try {
-      let folderId = null
-      const createFolder = async () => {
+      let createdNodeId = null
+      const createNode = async () => {
         const rollbackLocalEvent = beginLocalEventExpectation()
         let created = null
         try {
-          created = await createFolderRequest(selectedProjectId, parentId, { name: newFolderName.trim() || 'New Node' })
+          created = await createNodeRequest(selectedProjectId, parentId, { name: newFolderName.trim() || 'New Node' })
         } catch (error) {
           rollbackLocalEvent()
           throw error
         }
-        folderId = created.id
+        createdNodeId = created.id
         appendNodesToTree([created])
         updateProjectListNodeCount(1)
         setSelectedNodeId(parentId)
         return created
       }
 
-      await createFolder()
+      await createNode()
       pushHistory({
         undo: async () => {
-          if (folderId != null) {
+          if (createdNodeId != null) {
             const rollbackUndoEvent = beginLocalEventExpectation()
             try {
-              await deleteNodeRequest(folderId)
+              await deleteNodeRequest(createdNodeId)
             } catch (error) {
               rollbackUndoEvent()
               throw error
             }
-            removeNodesFromTree([folderId])
+            removeNodesFromTree([createdNodeId])
             updateProjectListNodeCount(-1)
             setSelectedNodeId(parentId)
           }
         },
         redo: async () => {
-          await createFolder()
+          await createNode()
         },
       })
     } catch (submitError) {
@@ -3012,7 +3014,7 @@ function App() {
       return
     }
     setPendingUploadParentId(selectedNode.id)
-    setPendingUploadMode('child')
+    setPendingUploadMode('photo_node')
     fileInputRef.current?.click()
   }
 
@@ -3021,11 +3023,11 @@ function App() {
       return
     }
     setPendingUploadParentId(selectedNode.id)
-    setPendingUploadMode('variant')
+    setPendingUploadMode('additional_photo')
     fileInputRef.current?.click()
   }
 
-  async function uploadFiles(files, targetNodeId = selectedNode?.id, mode = 'child', options = {}) {
+  async function uploadFiles(files, targetNodeId = selectedNode?.id, mode = 'photo_node', options = {}) {
     if (!targetNodeId || files.length === 0) {
       return
     }
@@ -3045,7 +3047,7 @@ function App() {
           throw error
         }
         createdNodeIds = createdNodes.map((node) => node.id)
-        if (mode === 'variant') {
+        if (mode === 'additional_photo') {
           await loadTree(selectedProjectId, targetNodeId)
         } else {
           appendNodesToTree(createdNodes)
@@ -3066,7 +3068,7 @@ function App() {
             rollbackUndoEvent()
             throw error
           }
-          if (mode === 'variant') {
+          if (mode === 'additional_photo') {
             await loadTree(selectedProjectId, targetNodeId)
           } else {
             removeNodesFromTree(createdNodeIds)
@@ -3083,7 +3085,7 @@ function App() {
     } finally {
       setBusy(false)
       setPendingUploadParentId(null)
-      setPendingUploadMode('child')
+      setPendingUploadMode('photo_node')
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }

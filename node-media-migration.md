@@ -54,7 +54,9 @@ The compatibility layer can be removed only after all of the following are true:
 
 ## Active Cleanup Checklist
 
-- [ ] Rename remaining API/workflow semantics that still say `variant` when they now mean `additional photo`.
+- [~] Rename remaining API/workflow semantics that still say `variant` when they now mean `additional photo`.
+  - Renderer uploads, camera capture, mobile capture, and move payloads now speak in `photo_node` / `additional_photo`.
+  - Legacy route names and storage fields still remain underneath for rollback compatibility.
 - [ ] Remove live renderer dependencies on `isVariant` and `variant_of_id` outside migration-only compatibility paths.
 - [ ] Rework upload and mobile-capture flows so attached-photo creation no longer relies on legacy variant-node creation under the hood.
 - [ ] Update import/export formats to serialize node media as first-class attached photos instead of visible variant nodes.

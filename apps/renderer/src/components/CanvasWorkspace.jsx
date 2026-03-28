@@ -476,7 +476,7 @@ export default function CanvasWorkspace({
               }}
               onClick={() => {
                 setPendingUploadParentId(contextMenu.nodeId)
-                setPendingUploadMode('child')
+                setPendingUploadMode('photo_node')
                 setContextMenu(null)
                 fileInputRef.current?.click()
               }}
@@ -493,7 +493,7 @@ export default function CanvasWorkspace({
               }}
               onClick={() => {
                 setPendingUploadParentId(contextMenu.nodeId)
-                setPendingUploadMode('variant')
+                setPendingUploadMode('additional_photo')
                 setContextMenu(null)
                 fileInputRef.current?.click()
               }}

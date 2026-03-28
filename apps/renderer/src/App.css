@@ -2246,6 +2246,30 @@ button:disabled {
   gap: 10px;
 }
 
+.search-panel__scope-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--inner-stroke);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.search-panel__scope-summary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-panel__scope-summary-actions .ghost-button {
+  width: auto;
+  min-width: 0;
+  padding-inline: 10px;
+}
+
 .search-panel__filter-button {
   color: var(--muted);
 }

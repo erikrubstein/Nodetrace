@@ -13,13 +13,13 @@ export default function CameraPanel({
   setSelectedCameraTemplateId,
 }) {
   async function handleAddPhotoNode() {
-    await captureFullCameraFrame('child', {
+    await captureFullCameraFrame('photo_node', {
       templateId: selectedCameraTemplateId || null,
     })
   }
 
   async function handleAddPhoto() {
-    await captureFullCameraFrame('variant', {
+    await captureFullCameraFrame('additional_photo', {
       templateId: selectedCameraTemplateId || null,
     })
   }
