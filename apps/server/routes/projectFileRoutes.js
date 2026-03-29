@@ -21,6 +21,7 @@ export function importRestorePayloadRoutes(app, ctx) {
     ensureNodeBelongsToProject,
     ensureCanHaveChildren,
     createNode,
+    addNodeMedia,
     parseTags,
     createUntitledName,
     resolveVariantAnchor,
@@ -297,6 +298,24 @@ export function importRestorePayloadRoutes(app, ctx) {
 
       const template = templateId ? assertIdentificationTemplateAccess(templateId, projectId) : null
 
+      if (additionalPhotoRequested || variantOfId) {
+        const mediaId = addNodeMedia({
+          nodeId: variantOfId,
+          projectId,
+          imagePath: path.relative(uploadsDir, originalFile.path),
+          previewPath: previewFile ? path.relative(uploadsDir, previewFile.path) : null,
+          originalFilename: originalFile.originalname,
+          imageEdits,
+        })
+
+        broadcastProjectEvent(projectId)
+        return res.status(201).json({
+          mode: 'additional_photo',
+          mediaId,
+          node: serializeNodeForUser(assertNode(variantOfId), req.user.id),
+        })
+      }
+
       const requestedName = String(req.body.name || '').trim()
       const resolvedName =
         requestedName && requestedName !== '<untitled>' ? requestedName : createUntitledName(projectId)
@@ -304,7 +323,7 @@ export function importRestorePayloadRoutes(app, ctx) {
         project_id: projectId,
         owner_user_id: req.user.id,
         parent_id: parentNode?.id ?? null,
-        variant_of_id: variantOfId,
+        variant_of_id: null,
         type: 'photo',
         name: resolvedName,
         notes: String(req.body.notes || '').trim(),
@@ -336,7 +355,11 @@ export function importRestorePayloadRoutes(app, ctx) {
       }
 
       broadcastProjectEvent(projectId)
-      res.status(201).json(serializeNodeForUser(assertNode(nodeId), req.user.id))
+      res.status(201).json({
+        mode: 'photo_node',
+        createdNodeId: nodeId,
+        node: serializeNodeForUser(assertNode(nodeId), req.user.id),
+      })
     } catch (error) {
       next(error)
     }
@@ -390,6 +413,24 @@ export function importRestorePayloadRoutes(app, ctx) {
 
       const template = templateId ? assertIdentificationTemplateAccess(templateId, projectId) : null
 
+      if (additionalPhotoRequested) {
+        const mediaId = addNodeMedia({
+          nodeId: variantOfId,
+          projectId,
+          imagePath: path.relative(uploadsDir, originalFile.path),
+          previewPath: previewFile ? path.relative(uploadsDir, previewFile.path) : null,
+          originalFilename: originalFile.originalname,
+          imageEdits,
+        })
+
+        broadcastProjectEvent(projectId)
+        return res.status(201).json({
+          mode: 'additional_photo',
+          mediaId,
+          node: serializeNodeForUser(assertNode(variantOfId), null),
+        })
+      }
+
       const requestedName = String(req.body.name || '').trim()
       const resolvedName =
         requestedName && requestedName !== '<untitled>' ? requestedName : createUntitledName(projectId)
@@ -397,7 +438,7 @@ export function importRestorePayloadRoutes(app, ctx) {
         project_id: projectId,
         owner_user_id: session.userId || project.owner_user_id || null,
         parent_id: parentNode?.id ?? null,
-        variant_of_id: variantOfId,
+        variant_of_id: null,
         type: 'photo',
         name: resolvedName,
         notes: String(req.body.notes || '').trim(),
@@ -431,7 +472,11 @@ export function importRestorePayloadRoutes(app, ctx) {
       }
 
       broadcastProjectEvent(projectId)
-      res.status(201).json(serializeNodeForUser(assertNode(nodeId), null))
+      res.status(201).json({
+        mode: 'photo_node',
+        createdNodeId: nodeId,
+        node: serializeNodeForUser(assertNode(nodeId), null),
+      })
     } catch (error) {
       next(error)
     }

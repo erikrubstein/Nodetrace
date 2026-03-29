@@ -1512,7 +1512,7 @@ function App() {
   }
 
   async function uploadPhotoFilesRequest(projectId, files, targetNodeId, mode = 'photo_node', options = {}) {
-    const createdNodes = []
+    const createdEntries = []
 
     for (const file of files) {
       const previewFile = await createPreviewFile(file)
@@ -1539,14 +1539,20 @@ function App() {
         formData.append('preview', previewFile)
       }
 
-      const createdNode = await api(`/api/projects/${projectId}/photos`, {
+      const payload = await api(`/api/projects/${projectId}/photos`, {
         method: 'POST',
         body: formData,
       })
-      createdNodes.push(createdNode)
+      const node = payload?.node || payload
+      createdEntries.push({
+        mode: payload?.mode || mode,
+        node,
+        createdNodeId: payload?.createdNodeId || (payload?.node ? null : node?.id) || null,
+        mediaId: payload?.mediaId || null,
+      })
     }
 
-    return createdNodes
+    return createdEntries
   }
 
   async function createDeleteSnapshot(node) {
@@ -3059,19 +3065,24 @@ function App() {
 
     try {
       let createdNodeIds = []
+      let createdMediaEntries = []
       const performUpload = async () => {
         const rollbackLocalEvent = beginLocalEventExpectation()
-        let createdNodes = []
+        let createdEntries = []
         try {
-          createdNodes = await uploadPhotoFilesRequest(selectedProjectId, files, targetNodeId, mode, options)
+          createdEntries = await uploadPhotoFilesRequest(selectedProjectId, files, targetNodeId, mode, options)
         } catch (error) {
           rollbackLocalEvent()
           throw error
         }
-        createdNodeIds = createdNodes.map((node) => node.id)
+        createdNodeIds = createdEntries.map((entry) => entry.createdNodeId).filter(Boolean)
+        createdMediaEntries = createdEntries
+          .filter((entry) => entry.mediaId && entry.node?.id)
+          .map((entry) => ({ mediaId: entry.mediaId, nodeId: entry.node.id }))
         if (mode === 'additional_photo') {
           await loadTree(selectedProjectId, targetNodeId)
         } else {
+          const createdNodes = createdEntries.map((entry) => entry.node).filter(Boolean)
           appendNodesToTree(createdNodes)
           updateProjectListNodeCount(createdNodes.length)
         }
@@ -3083,9 +3094,17 @@ function App() {
         undo: async () => {
           const rollbackUndoEvent = beginLocalEventExpectation()
           try {
-          for (const nodeId of [...createdNodeIds].reverse()) {
-            await deleteNodeRequest(nodeId)
-          }
+            if (mode === 'additional_photo') {
+              for (const entry of [...createdMediaEntries].reverse()) {
+                await api(`/api/nodes/${entry.nodeId}/media/${entry.mediaId}`, {
+                  method: 'DELETE',
+                })
+              }
+            } else {
+              for (const nodeId of [...createdNodeIds].reverse()) {
+                await deleteNodeRequest(nodeId)
+              }
+            }
           } catch (error) {
             rollbackUndoEvent()
             throw error

@@ -60,7 +60,9 @@ The compatibility layer can be removed only after all of the following are true:
 - [~] Remove live renderer dependencies on `isVariant` and `variant_of_id` outside migration-only compatibility paths.
   - Visible canvas and selection flows no longer branch on `isVariant`.
   - Tree shaping and archive compatibility still retain legacy `variant_of_id` handling underneath.
-- [ ] Rework upload and mobile-capture flows so attached-photo creation no longer relies on legacy variant-node creation under the hood.
+- [~] Rework upload and mobile-capture flows so attached-photo creation no longer relies on legacy variant-node creation under the hood.
+  - Additional-photo uploads in the app and mobile capture now create `node_media` rows directly.
+  - Photo-node creation still uses the legacy node record shape and dual-write compatibility layer.
 - [ ] Update import/export formats to serialize node media as first-class attached photos instead of visible variant nodes.
 - [~] Remove legacy variant move/promote endpoints once all visible workflows are migrated.
   - Dead `POST /api/nodes/:id/promote-variant` route removed from the live API.

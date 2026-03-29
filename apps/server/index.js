@@ -1201,6 +1201,30 @@ const updateNodeMediaEdits = db.transaction(({ nodeId, mediaId, imageEdits, proj
   updateProjectTimestamp.run(now, projectId)
 })
 
+const addNodeMedia = db.transaction(({ nodeId, projectId, imagePath, previewPath, originalFilename, imageEdits }) => {
+  assertNode(nodeId)
+  const now = new Date().toISOString()
+  const existingMedia = listNodeMediaByNodeStmt.all(nodeId)
+  const mediaId = generateUniqueId((candidate) => Boolean(getNodeMediaByIdStmt.get(candidate)))
+  insertNodeMediaMirrorStmt.run({
+    id: mediaId,
+    project_id: projectId,
+    node_id: nodeId,
+    legacy_source_node_id: null,
+    is_primary: existingMedia.length ? 0 : 1,
+    sort_order: existingMedia.length ? existingMedia.length : 0,
+    image_edits_json: JSON.stringify(normalizeNodeImageEdits(imageEdits)),
+    image_path: imagePath || null,
+    preview_path: previewPath || null,
+    original_filename: originalFilename || null,
+    created_at: now,
+    updated_at: now,
+  })
+  resequenceNodeMedia(nodeId)
+  updateProjectTimestamp.run(now, projectId)
+  return mediaId
+})
+
 const setPrimaryNodeMedia = db.transaction(({ nodeId, mediaId, projectId }) => {
   assertNodeMedia(nodeId, mediaId)
   const now = new Date().toISOString()
@@ -3298,6 +3322,7 @@ const serverContext = {
   cleanupMobileConnections,
   countOwnedProjectsByUserStmt,
   countUsers,
+  addNodeMedia,
   createNode,
   createProjectWithRoot,
   createUntitledName,
