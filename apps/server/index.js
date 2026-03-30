@@ -34,6 +34,10 @@ const AUTH_COOKIE = 'session'
 const OPENAI_IDENTIFICATION_MODEL = process.env.OPENAI_IDENTIFICATION_MODEL || 'gpt-4.1'
 const PROJECT_SECRET_RAW = process.env.NODETRACE_SECRET_KEY || ''
 const PROJECT_SECRET_KEY = PROJECT_SECRET_RAW ? crypto.createHash('sha256').update(PROJECT_SECRET_RAW).digest() : null
+const PHOTO_UPLOAD_MAX_FILE_SIZE_BYTES = 40 * 1024 * 1024
+const PROJECT_ARCHIVE_MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024
+const SUBTREE_RESTORE_MAX_FILE_SIZE_BYTES = 16 * 1024 * 1024
+const SUBTREE_RESTORE_MAX_FILES = 32
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -72,6 +76,7 @@ function loadEnvFile(filePath) {
 fs.mkdirSync(uploadsDir, { recursive: true })
 fs.mkdirSync(tempDir, { recursive: true })
 fs.mkdirSync(path.join(tempDir, 'imports'), { recursive: true })
+fs.mkdirSync(path.join(tempDir, 'restore'), { recursive: true })
 
 const ID_FIRST_CHARS = 'abcdefghijklmnopqrstuvwxyz'
 const ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -247,6 +252,16 @@ function normalizePassword(passwordInput) {
 
 function getProjectUploadDir(projectId) {
   return path.join(uploadsDir, String(projectId))
+}
+
+function readUploadedFileData(file) {
+  if (file?.buffer) {
+    return file.buffer
+  }
+  if (file?.path && fs.existsSync(file.path)) {
+    return fs.readFileSync(file.path)
+  }
+  return null
 }
 
 function copyStoredUpload(projectId, relativePath, label = 'media') {
@@ -2530,9 +2545,27 @@ const storage = multer.diskStorage({
   },
 })
 
-const upload = multer({ storage })
-const importUpload = multer({ dest: path.join(tempDir, 'imports') })
-const restoreUpload = multer({ storage: multer.memoryStorage() })
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: PHOTO_UPLOAD_MAX_FILE_SIZE_BYTES,
+    files: 2,
+  },
+})
+const importUpload = multer({
+  dest: path.join(tempDir, 'imports'),
+  limits: {
+    fileSize: PROJECT_ARCHIVE_MAX_FILE_SIZE_BYTES,
+    files: 1,
+  },
+})
+const restoreUpload = multer({
+  dest: path.join(tempDir, 'restore'),
+  limits: {
+    fileSize: SUBTREE_RESTORE_MAX_FILE_SIZE_BYTES,
+    files: SUBTREE_RESTORE_MAX_FILES,
+  },
+})
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(tempDir, `${prefix}-`))
@@ -2873,7 +2906,8 @@ function restoreNodeMediaFromArchive({
       : entry.image_file_key
         ? (() => {
             const file = uploadedFileMap?.get(entry.image_file_key) || null
-            if (!file?.buffer) {
+            const fileData = readUploadedFileData(file)
+            if (!fileData) {
               return null
             }
             const uniqueToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -2881,7 +2915,7 @@ function restoreNodeMediaFromArchive({
             const relativeUploadPath = path.join(String(projectId), `${uniqueToken}-${safeName}`)
             const absoluteUploadPath = path.join(uploadsDir, relativeUploadPath)
             fs.mkdirSync(path.dirname(absoluteUploadPath), { recursive: true })
-            fs.writeFileSync(absoluteUploadPath, file.buffer)
+            fs.writeFileSync(absoluteUploadPath, fileData)
             return relativeUploadPath
           })()
         : null
@@ -2890,7 +2924,8 @@ function restoreNodeMediaFromArchive({
       : entry.preview_file_key
         ? (() => {
             const file = uploadedFileMap?.get(entry.preview_file_key) || null
-            if (!file?.buffer) {
+            const fileData = readUploadedFileData(file)
+            if (!fileData) {
               return null
             }
             const uniqueToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -2898,7 +2933,7 @@ function restoreNodeMediaFromArchive({
             const relativeUploadPath = path.join(String(projectId), `${uniqueToken}-${safeName}`)
             const absoluteUploadPath = path.join(uploadsDir, relativeUploadPath)
             fs.mkdirSync(path.dirname(absoluteUploadPath), { recursive: true })
-            fs.writeFileSync(absoluteUploadPath, file.buffer)
+            fs.writeFileSync(absoluteUploadPath, fileData)
             return relativeUploadPath
           })()
         : null
@@ -3221,15 +3256,17 @@ function restoreSubtreeFromPayload(projectId, manifest, uploadedFiles) {
         ? path.join(String(projectId), `${uniqueToken}-${safePreviewName}`)
         : null
 
-      if (imageFile?.buffer) {
+      const imageFileData = readUploadedFileData(imageFile)
+      if (imageFileData) {
         const absoluteImagePath = path.join(uploadsDir, relativeImagePath)
         fs.mkdirSync(path.dirname(absoluteImagePath), { recursive: true })
-        fs.writeFileSync(absoluteImagePath, imageFile.buffer)
+        fs.writeFileSync(absoluteImagePath, imageFileData)
       }
-      if (previewFile?.buffer) {
+      const previewFileData = readUploadedFileData(previewFile)
+      if (previewFileData) {
         const absolutePreviewPath = path.join(uploadsDir, relativePreviewPath)
         fs.mkdirSync(path.dirname(absolutePreviewPath), { recursive: true })
-        fs.writeFileSync(absolutePreviewPath, previewFile.buffer)
+        fs.writeFileSync(absolutePreviewPath, previewFileData)
       }
 
       const nodeId = createNode({

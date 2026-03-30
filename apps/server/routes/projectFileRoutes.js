@@ -31,6 +31,19 @@ export function importRestorePayloadRoutes(app, ctx) {
     assertIdentificationTemplateAccess,
   } = ctx
 
+  function cleanupUploadedFiles(files = []) {
+    for (const file of files) {
+      if (!file?.path || !fs.existsSync(file.path)) {
+        continue
+      }
+      try {
+        fs.unlinkSync(file.path)
+      } catch {
+        // Ignore temp cleanup failures after request completion.
+      }
+    }
+  }
+
   function resolvePhotoUploadIntent(body) {
     const uploadMode = String(body.uploadMode || body.mode || '').trim().toLowerCase()
     const additionalPhotoRequested =
@@ -492,6 +505,8 @@ export function importRestorePayloadRoutes(app, ctx) {
       res.status(201).json(restoredRoot)
     } catch (error) {
       next(error)
+    } finally {
+      cleanupUploadedFiles(req.files || [])
     }
   })
 }

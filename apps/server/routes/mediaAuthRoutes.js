@@ -51,7 +51,16 @@ export function registerMediaAuthRoutes(app, ctx) {
       const projectId = normalized[0]
       assertProjectAccess(projectId, req.user.id)
 
-      const absolutePath = path.join(uploadsDir, ...normalized)
+      const projectUploadDir = path.resolve(uploadsDir, projectId)
+      const absolutePath = path.resolve(projectUploadDir, ...normalized.slice(1))
+      const relativeToProjectDir = path.relative(projectUploadDir, absolutePath)
+      if (
+        relativeToProjectDir.startsWith('..') ||
+        path.isAbsolute(relativeToProjectDir)
+      ) {
+        return res.status(404).json({ error: 'File not found' })
+      }
+
       if (!fs.existsSync(absolutePath)) {
         return res.status(404).json({ error: 'File not found' })
       }
