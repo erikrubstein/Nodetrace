@@ -7,6 +7,7 @@ import CameraPanel from './components/CameraPanel'
 import CanvasWorkspace from './components/CanvasWorkspace'
 import CaptureScreen from './components/CaptureScreen'
 import CollaboratorsPanel from './components/CollaboratorsPanel'
+import DesktopServerManager from './components/DesktopServerManager'
 import DockedSidebar from './components/DockedSidebar'
 import FieldsPanel from './components/FieldsPanel'
 import InspectorPanel from './components/InspectorPanel'
@@ -22,16 +23,22 @@ import useNodeEditing from './hooks/useNodeEditing'
 import useProjectSync from './hooks/useProjectSync'
 import useUndoRedo from './hooks/useUndoRedo'
 import useWorkspaceInteractions from './hooks/useWorkspaceInteractions'
-import { ApiError, api, uploadWithProgress } from './lib/api'
+import { ApiError, api, configureApiBaseUrl, uploadWithProgress } from './lib/api'
 import { defaultProjectSettings, defaultUserProjectUi, getPanelMinWidth, panelIds, SIDEBAR_RAIL_WIDTH } from './lib/constants'
 import {
   closeDesktopWindow,
+  createDesktopServerProfile,
+  deleteDesktopServerProfile,
+  getDesktopServerState,
   getDesktopWindowState,
   isDesktopEnvironment,
   minimizeDesktopWindow,
   openDesktopPanelWindow,
+  selectDesktopServerProfile,
+  subscribeDesktopServerState,
   subscribeDesktopWindowState,
   toggleMaximizeDesktopWindow,
+  updateDesktopServerProfile,
 } from './lib/desktop'
 import { blobFromUrl, createPreviewFile } from './lib/image'
 import {
@@ -102,11 +109,19 @@ function getPresenceInitials(username) {
 
 function MainApp() {
   const { panelWindowId } = getUrlState()
+  const desktopEnvironment = isDesktopEnvironment()
   const isPanelWindow = Boolean(panelWindowId)
   const windowInstanceIdRef = useRef(`window-${Math.random().toString(36).slice(2, 10)}`)
   const applyingRemoteSelectionRef = useRef(false)
   const [currentUser, setCurrentUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
+  const [desktopServerReady, setDesktopServerReady] = useState(() => !desktopEnvironment)
+  const [desktopServerState, setDesktopServerState] = useState({
+    profiles: [],
+    selectedProfileId: null,
+    proxyBaseUrl: '',
+  })
+  const [desktopServerDialogOpen, setDesktopServerDialogOpen] = useState(false)
   const [projects, setProjects] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [tree, setTree] = useState(null)
@@ -185,7 +200,7 @@ function MainApp() {
     fields: [],
   })
   const [showMobileEntryPrompt, setShowMobileEntryPrompt] = useState(
-    () => !isPanelWindow && !isDesktopEnvironment() && shouldShowMobileEntryPrompt(),
+    () => !isPanelWindow && !desktopEnvironment && shouldShowMobileEntryPrompt(),
   )
   const fileInputRef = useRef(null)
   const importInputRef = useRef(null)
@@ -205,6 +220,11 @@ function MainApp() {
   const applyTreePayload = useCallback((payload) => {
     setTree(normalizeServerTree(payload))
   }, [])
+  const selectedDesktopServerProfile = useMemo(
+    () => desktopServerState.profiles.find((profile) => profile.id === desktopServerState.selectedProfileId) || null,
+    [desktopServerState.profiles, desktopServerState.selectedProfileId],
+  )
+  const desktopServerSelectionRequired = desktopEnvironment && desktopServerReady && !selectedDesktopServerProfile
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -217,6 +237,45 @@ function MainApp() {
   useEffect(() => {
     treeRef.current = tree
   }, [tree])
+
+  useEffect(() => {
+    if (!desktopEnvironment) {
+      configureApiBaseUrl('')
+      setDesktopServerReady(true)
+      return undefined
+    }
+
+    let cancelled = false
+    getDesktopServerState()
+      .then((state) => {
+        if (cancelled) {
+          return
+        }
+        setDesktopServerState(state)
+        configureApiBaseUrl(state.proxyBaseUrl || '')
+        setDesktopServerReady(true)
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return
+        }
+        setError(error.message || 'Unable to load desktop server profiles.')
+        setDesktopServerReady(true)
+      })
+
+    const unsubscribe = subscribeDesktopServerState((state) => {
+      if (cancelled) {
+        return
+      }
+      setDesktopServerState(state)
+      configureApiBaseUrl(state.proxyBaseUrl || '')
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [desktopEnvironment])
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId
@@ -821,10 +880,29 @@ function MainApp() {
       newPassword: '',
       deleteConfirmation: '',
     })
-    setStatus('Sign in to access your projects.')
-  }, [])
+    setStatus(desktopEnvironment ? 'Sign in to access this server.' : 'Sign in to access your projects.')
+  }, [desktopEnvironment])
 
   const loadCurrentUser = useCallback(async () => {
+    if (desktopEnvironment && !desktopServerReady) {
+      return
+    }
+
+    if (desktopEnvironment && !selectedDesktopServerProfile) {
+      handleAuthLost()
+      setStatus('Add or select a desktop server to continue.')
+      return
+    }
+
+    setCurrentUser(null)
+    setProjects([])
+    setSelectedProjectId(null)
+    setTree(null)
+    setSelectedNodeId(null)
+    setProjectUiReady(false)
+    setMobileConnectionCount(0)
+    setAuthReady(false)
+
     try {
       const payload = await api('/api/auth/me')
       if (!payload?.authenticated || !payload.user) {
@@ -836,14 +914,82 @@ function MainApp() {
     } finally {
       setAuthReady(true)
     }
-  }, [handleAuthLost])
+  }, [desktopEnvironment, desktopServerReady, handleAuthLost, selectedDesktopServerProfile])
 
   useEffect(() => {
+    if (desktopEnvironment && !desktopServerReady) {
+      return
+    }
     loadCurrentUser().catch((loadError) => {
+      handleAuthLost()
       setError(loadError.message)
       setStatus('Unable to initialize authentication.')
     })
-  }, [loadCurrentUser])
+  }, [desktopEnvironment, desktopServerReady, handleAuthLost, loadCurrentUser])
+
+  async function createServerProfile(payload) {
+    setBusy(true)
+    setError('')
+    try {
+      const nextState = await createDesktopServerProfile(payload)
+      if (nextState) {
+        setDesktopServerState(nextState)
+        configureApiBaseUrl(nextState.proxyBaseUrl || '')
+      }
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function updateServerProfile(id, payload) {
+    setBusy(true)
+    setError('')
+    try {
+      const nextState = await updateDesktopServerProfile(id, payload)
+      if (nextState) {
+        setDesktopServerState(nextState)
+        configureApiBaseUrl(nextState.proxyBaseUrl || '')
+      }
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteServerProfile(id) {
+    setBusy(true)
+    setError('')
+    try {
+      const nextState = await deleteDesktopServerProfile(id)
+      if (nextState) {
+        setDesktopServerState(nextState)
+        configureApiBaseUrl(nextState.proxyBaseUrl || '')
+      }
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function selectServerProfile(id) {
+    setBusy(true)
+    setError('')
+    try {
+      const nextState = await selectDesktopServerProfile(id)
+      if (nextState) {
+        setDesktopServerState(nextState)
+        configureApiBaseUrl(nextState.proxyBaseUrl || '')
+      }
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const { loadProjects, loadTree } = useProjectSync({
     clearHistory,
@@ -3792,6 +3938,9 @@ function MainApp() {
         content: (
           <AccountPanel
             currentUser={currentUser}
+            currentServerLabel={selectedDesktopServerProfile?.name || ''}
+            currentServerUrl={selectedDesktopServerProfile?.baseUrl || ''}
+            manageServers={desktopEnvironment ? () => setDesktopServerDialogOpen(true) : null}
             openAccountDialog={(dialog) => {
               setError('')
               setAccountStatus('')
@@ -3853,14 +4002,33 @@ function MainApp() {
     )
   }
 
+  if (desktopServerSelectionRequired) {
+    return (
+      <div className="app-shell app-shell--auth" data-theme={theme}>
+        <DesktopServerManager
+          busy={busy}
+          onCreateProfile={createServerProfile}
+          onDeleteProfile={deleteServerProfile}
+          onSelectProfile={selectServerProfile}
+          onUpdateProfile={updateServerProfile}
+          profiles={desktopServerState.profiles}
+          selectedProfileId={desktopServerState.selectedProfileId}
+        />
+      </div>
+    )
+  }
+
   if (!currentUser) {
     return (
       <div className="app-shell app-shell--auth" data-theme={theme}>
         <AuthScreen
           busy={busy}
           clearError={() => setError('')}
+          currentServerLabel={selectedDesktopServerProfile?.name || ''}
+          currentServerUrl={selectedDesktopServerProfile?.baseUrl || ''}
           error={error}
           onLogin={loginUser}
+          onManageServers={desktopEnvironment ? () => setDesktopServerDialogOpen(true) : null}
           onRegister={registerUser}
         />
       </div>
@@ -3898,11 +4066,22 @@ function MainApp() {
   }
 
   return (
-    <div
-      className="app-shell"
-      data-theme={theme}
-    >
-        <TopBar
+    <div className="app-shell" data-theme={theme}>
+      {desktopEnvironment && desktopServerDialogOpen ? (
+        <div className="desktop-server-modal">
+          <DesktopServerManager
+            busy={busy}
+            onClose={() => setDesktopServerDialogOpen(false)}
+            onCreateProfile={createServerProfile}
+            onDeleteProfile={deleteServerProfile}
+            onSelectProfile={selectServerProfile}
+            onUpdateProfile={updateServerProfile}
+            profiles={desktopServerState.profiles}
+            selectedProfileId={desktopServerState.selectedProfileId}
+          />
+        </div>
+      ) : null}
+      <TopBar
         appendChildren={appendChildren}
         appendParents={appendParents}
         appendSearchResults={appendSearchResults}

@@ -1,8 +1,10 @@
 import path from 'node:path'
 import process from 'node:process'
 import fs from 'node:fs'
-import { setTimeout as delay } from 'node:timers/promises'
-import { fileURLToPath } from 'node:url'
+import http from 'node:http'
+import https from 'node:https'
+import { randomUUID } from 'node:crypto'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { getPanelInitialWidth, getPanelMinWidth } from '../../packages/shared/src/panelSizing.js'
 
@@ -10,16 +12,20 @@ const desktopDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRootDir = path.resolve(desktopDir, '../..')
 const preloadPath = path.join(desktopDir, 'preload.cjs')
 const desktopLogPath = path.join(repoRootDir, 'logs', 'desktop.log')
+const desktopStatePath = path.join(app.getPath('userData'), 'desktop-state.json')
+const rendererEntryPath = path.join(repoRootDir, 'dist', 'index.html')
 const appIconPath = path.join(repoRootDir, 'apps', 'renderer', 'public', 'nodetrace.svg')
-const desktopHost = '127.0.0.1'
-const configuredServerUrl = String(process.env.NODETRACE_SERVER_URL || '')
-  .trim()
-  .replace(/\/+$/, '')
-const desktopBaseUrl = configuredServerUrl || `http://${desktopHost}:3001`
 const rendererDevUrl = process.argv.find((arg) => arg.startsWith('--dev-url='))?.slice('--dev-url='.length) || ''
 
 let mainWindow = null
 const panelWindows = new Map()
+let desktopProxyServer = null
+let desktopProxyBaseUrl = ''
+let desktopState = {
+  profiles: [],
+  selectedProfileId: null,
+  sessionCookiesByProfileId: {},
+}
 
 function logDesktop(message) {
   const line = `[${new Date().toISOString()}] ${message}\n`
@@ -52,11 +58,241 @@ function buildWindowOptions(overrides = {}) {
   }
 }
 
-function getRendererUrl(windowPath = '') {
-  if (rendererDevUrl) {
-    return `${rendererDevUrl}${windowPath}`
+function normalizeServerProfile(profile, fallbackId = randomUUID()) {
+  const id = String(profile?.id || fallbackId).trim()
+  const baseUrlRaw = String(profile?.baseUrl || '').trim()
+  if (!id || !baseUrlRaw) {
+    return null
   }
-  return `${desktopBaseUrl}${windowPath}`
+
+  let parsedUrl = null
+  try {
+    parsedUrl = new URL(baseUrlRaw)
+  } catch {
+    return null
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return null
+  }
+
+  parsedUrl.hash = ''
+  parsedUrl.search = ''
+  const baseUrl = parsedUrl.toString().replace(/\/+$/, '')
+  const fallbackName = parsedUrl.host
+  const name = String(profile?.name || fallbackName).trim() || fallbackName
+
+  return {
+    id,
+    name,
+    baseUrl,
+  }
+}
+
+function readDesktopState() {
+  try {
+    if (!fs.existsSync(desktopStatePath)) {
+      return
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(desktopStatePath, 'utf8'))
+    const profiles = Array.isArray(parsed?.profiles)
+      ? parsed.profiles
+          .map((profile) => normalizeServerProfile(profile, profile?.id || randomUUID()))
+          .filter(Boolean)
+      : []
+    const selectedProfileId =
+      profiles.some((profile) => profile.id === parsed?.selectedProfileId) ? parsed.selectedProfileId : profiles[0]?.id || null
+
+    desktopState = {
+      profiles,
+      selectedProfileId,
+      sessionCookiesByProfileId:
+        parsed?.sessionCookiesByProfileId && typeof parsed.sessionCookiesByProfileId === 'object'
+          ? { ...parsed.sessionCookiesByProfileId }
+          : {},
+    }
+  } catch (error) {
+    logDesktop(`Failed to read desktop state: ${error.message}`)
+  }
+}
+
+function writeDesktopState() {
+  try {
+    fs.mkdirSync(path.dirname(desktopStatePath), { recursive: true })
+    fs.writeFileSync(
+      desktopStatePath,
+      JSON.stringify(
+        {
+          profiles: desktopState.profiles,
+          selectedProfileId: desktopState.selectedProfileId,
+          sessionCookiesByProfileId: desktopState.sessionCookiesByProfileId,
+        },
+        null,
+        2,
+      ),
+    )
+  } catch (error) {
+    logDesktop(`Failed to write desktop state: ${error.message}`)
+  }
+}
+
+function getSelectedServerProfile() {
+  return desktopState.profiles.find((profile) => profile.id === desktopState.selectedProfileId) || null
+}
+
+function getDesktopServerState() {
+  return {
+    profiles: desktopState.profiles.map((profile) => ({ ...profile })),
+    selectedProfileId: desktopState.selectedProfileId,
+    proxyBaseUrl: desktopProxyBaseUrl,
+  }
+}
+
+function broadcastDesktopServerState() {
+  const payload = getDesktopServerState()
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('desktop:server-state', payload)
+    }
+  }
+}
+
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin || '*'
+  res.setHeader('Access-Control-Allow-Origin', origin)
+  res.setHeader('Vary', 'Origin')
+  res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS')
+}
+
+function getStoredCookieHeader(profileId) {
+  return String(desktopState.sessionCookiesByProfileId?.[profileId] || '').trim()
+}
+
+function captureSessionCookie(profileId, setCookieHeader) {
+  const headers = Array.isArray(setCookieHeader) ? setCookieHeader : setCookieHeader ? [setCookieHeader] : []
+  let changed = false
+
+  for (const header of headers) {
+    const [cookiePair = '', ...attributes] = String(header).split(';')
+    const [cookieName = '', cookieValue = ''] = cookiePair.split('=')
+    if (cookieName.trim() !== 'session') {
+      continue
+    }
+
+    const expired = attributes.some((attribute) => {
+      const [name = '', value = ''] = String(attribute).split('=')
+      return name.trim().toLowerCase() === 'max-age' && Number.parseInt(String(value).trim(), 10) <= 0
+    })
+
+    if (expired || !cookieValue.trim()) {
+      if (desktopState.sessionCookiesByProfileId?.[profileId]) {
+        delete desktopState.sessionCookiesByProfileId[profileId]
+        changed = true
+      }
+      continue
+    }
+
+    desktopState.sessionCookiesByProfileId[profileId] = `session=${cookieValue.trim()}`
+    changed = true
+  }
+
+  if (changed) {
+    writeDesktopState()
+  }
+}
+
+function createDesktopProxyServer() {
+  return http.createServer((req, res) => {
+    setCorsHeaders(req, res)
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    const selectedProfile = getSelectedServerProfile()
+    if (!selectedProfile) {
+      res.writeHead(503, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'No desktop server selected' }))
+      return
+    }
+
+    let targetUrl = null
+    try {
+      targetUrl = new URL(req.url || '/', `${selectedProfile.baseUrl}/`)
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Invalid desktop proxy request URL' }))
+      return
+    }
+
+    const proxyHeaders = { ...req.headers }
+    delete proxyHeaders.host
+    delete proxyHeaders.origin
+    delete proxyHeaders.referer
+    delete proxyHeaders.connection
+    delete proxyHeaders['accept-encoding']
+    proxyHeaders.cookie = getStoredCookieHeader(selectedProfile.id)
+
+    const transport = targetUrl.protocol === 'https:' ? https : http
+    const upstreamRequest = transport.request(
+      targetUrl,
+      {
+        method: req.method,
+        headers: proxyHeaders,
+      },
+      (upstreamResponse) => {
+        captureSessionCookie(selectedProfile.id, upstreamResponse.headers['set-cookie'])
+
+        for (const [headerName, headerValue] of Object.entries(upstreamResponse.headers)) {
+          if (headerValue != null && headerName.toLowerCase() !== 'set-cookie') {
+            res.setHeader(headerName, headerValue)
+          }
+        }
+        setCorsHeaders(req, res)
+        res.writeHead(upstreamResponse.statusCode || 502)
+        upstreamResponse.pipe(res)
+      },
+    )
+
+    upstreamRequest.on('error', (error) => {
+      res.writeHead(502, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: `Desktop proxy request failed: ${error.message}` }))
+    })
+
+    req.pipe(upstreamRequest)
+  })
+}
+
+async function startDesktopProxy() {
+  if (desktopProxyServer) {
+    return
+  }
+
+  desktopProxyServer = createDesktopProxyServer()
+  await new Promise((resolve, reject) => {
+    desktopProxyServer.once('error', reject)
+    desktopProxyServer.listen(0, '127.0.0.1', () => {
+      const address = desktopProxyServer.address()
+      desktopProxyBaseUrl = `http://127.0.0.1:${address.port}`
+      desktopProxyServer.off('error', reject)
+      resolve()
+    })
+  })
+  logDesktop(`Desktop proxy listening at ${desktopProxyBaseUrl}`)
+}
+
+function buildRendererUrl() {
+  if (rendererDevUrl) {
+    return rendererDevUrl
+  }
+  if (!fs.existsSync(rendererEntryPath)) {
+    throw new Error(`Desktop renderer build not found at ${rendererEntryPath}. Run "npm run build".`)
+  }
+  return pathToFileURL(rendererEntryPath).toString()
 }
 
 function attachWindowStateListeners(window, label) {
@@ -80,28 +316,9 @@ function attachWindowStateListeners(window, label) {
   })
 }
 
-async function waitForServerReady() {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    try {
-      const response = await fetch(`${desktopBaseUrl}/api/auth/me`, { method: 'GET' })
-      if (response.ok) {
-        return
-      }
-    } catch {
-      // Keep polling until the local server is ready.
-    }
-    await delay(250)
-  }
-
-  throw new Error(`Timed out waiting for Nodetrace server at ${desktopBaseUrl}`)
-}
-
-async function loadWindow(window, windowPath = '') {
-  if (!rendererDevUrl) {
-    await waitForServerReady()
-  }
-  logDesktop(`Desktop loading ${getRendererUrl(windowPath)}`)
-  await window.loadURL(getRendererUrl(windowPath))
+async function loadWindow(window, url) {
+  logDesktop(`Desktop loading ${url}`)
+  await window.loadURL(url)
 }
 
 function createMainWindow() {
@@ -112,7 +329,7 @@ function createMainWindow() {
     logDesktop('Main window closed')
     mainWindow = null
   })
-  loadWindow(mainWindow).catch((error) => {
+  loadWindow(mainWindow, buildRendererUrl()).catch((error) => {
     logDesktop(`Main window load error: ${error.message}`)
     mainWindow.loadURL(`data:text/plain,${encodeURIComponent(error.message)}`).catch(() => {})
   })
@@ -146,7 +363,7 @@ function openPanelWindow(options = {}) {
     panelWindows.delete(panelId)
   })
 
-  const windowUrl = new URL(getRendererUrl('/'))
+  const windowUrl = new URL(buildRendererUrl())
   windowUrl.searchParams.set('panelWindow', panelId)
   if (options.projectId) {
     windowUrl.searchParams.set('project', String(options.projectId))
@@ -161,6 +378,56 @@ function openPanelWindow(options = {}) {
   })
 
   return { ok: true, panelId }
+}
+
+async function upsertServerProfile(id, payload) {
+  const nextProfile = normalizeServerProfile(payload, id || randomUUID())
+  if (!nextProfile) {
+    throw new Error('A valid server name and base URL are required')
+  }
+
+  const duplicate = desktopState.profiles.find(
+    (profile) => profile.baseUrl === nextProfile.baseUrl && profile.id !== nextProfile.id,
+  )
+  if (duplicate) {
+    throw new Error('A server with that base URL already exists')
+  }
+
+  const existingIndex = desktopState.profiles.findIndex((profile) => profile.id === nextProfile.id)
+  if (existingIndex >= 0) {
+    desktopState.profiles[existingIndex] = nextProfile
+  } else {
+    desktopState.profiles.push(nextProfile)
+  }
+
+  if (!desktopState.selectedProfileId) {
+    desktopState.selectedProfileId = nextProfile.id
+  }
+
+  writeDesktopState()
+  broadcastDesktopServerState()
+  return getDesktopServerState()
+}
+
+async function deleteServerProfile(id) {
+  desktopState.profiles = desktopState.profiles.filter((profile) => profile.id !== id)
+  delete desktopState.sessionCookiesByProfileId[id]
+  if (desktopState.selectedProfileId === id) {
+    desktopState.selectedProfileId = desktopState.profiles[0]?.id || null
+  }
+  writeDesktopState()
+  broadcastDesktopServerState()
+  return getDesktopServerState()
+}
+
+async function selectServerProfile(id) {
+  if (!desktopState.profiles.some((profile) => profile.id === id)) {
+    throw new Error('Server profile not found')
+  }
+  desktopState.selectedProfileId = id
+  writeDesktopState()
+  broadcastDesktopServerState()
+  return getDesktopServerState()
 }
 
 function getEventWindow(event) {
@@ -190,6 +457,13 @@ ipcMain.handle('desktop:get-window-state', (event) => {
   const window = getEventWindow(event)
   return { maximized: Boolean(window?.isMaximized()) }
 })
+ipcMain.handle('desktop:get-server-state', () => getDesktopServerState())
+ipcMain.handle('desktop:create-server-profile', (_event, profile) => upsertServerProfile(null, profile))
+ipcMain.handle('desktop:update-server-profile', (_event, payload) =>
+  upsertServerProfile(String(payload?.id || '').trim(), payload?.profile || {}),
+)
+ipcMain.handle('desktop:delete-server-profile', (_event, id) => deleteServerProfile(String(id || '').trim()))
+ipcMain.handle('desktop:select-server-profile', (_event, id) => selectServerProfile(String(id || '').trim()))
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -203,6 +477,12 @@ app.on('activate', () => {
   }
 })
 
+app.on('before-quit', () => {
+  desktopProxyServer?.close()
+})
+
 await app.whenReady()
-logDesktop(`Desktop shell starting${rendererDevUrl ? ` with renderer ${rendererDevUrl}` : ''} against ${desktopBaseUrl}`)
+readDesktopState()
+await startDesktopProxy()
+logDesktop(`Desktop shell starting${rendererDevUrl ? ` with renderer ${rendererDevUrl}` : ''}`)
 createMainWindow()

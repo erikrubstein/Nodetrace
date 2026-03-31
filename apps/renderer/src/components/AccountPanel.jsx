@@ -1,5 +1,8 @@
 export default function AccountPanel({
   currentUser,
+  currentServerLabel = '',
+  currentServerUrl = '',
+  manageServers = null,
   openAccountDialog,
   logoutUser,
 }) {
@@ -16,6 +19,17 @@ export default function AccountPanel({
           Logout
         </button>
       </div>
+
+      {manageServers ? (
+        <div className="inspector__section field-stack">
+          <div className="inspector__title">Server</div>
+          <div className="inspector__name">{currentServerLabel || 'No server selected'}</div>
+          {currentServerUrl ? <div className="settings-panel__meta-row">{currentServerUrl}</div> : null}
+          <button className="ghost-button" onClick={manageServers} type="button">
+            Manage Servers
+          </button>
+        </div>
+      ) : null}
 
       <div className="inspector__section field-stack">
         <div className="inspector__title">Manage</div>

@@ -1,6 +1,15 @@
 import { useState } from 'react'
 
-export default function AuthScreen({ busy, clearError, error, onLogin, onRegister }) {
+export default function AuthScreen({
+  busy,
+  clearError,
+  currentServerLabel = '',
+  currentServerUrl = '',
+  error,
+  onLogin,
+  onManageServers = null,
+  onRegister,
+}) {
   const [mode, setMode] = useState('login')
   const [loginUsername, setLoginUsername] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -53,6 +62,19 @@ export default function AuthScreen({ busy, clearError, error, onLogin, onRegiste
           <div className="auth-title">Nodetrace</div>
         </div>
         <div className="auth-card">
+        {currentServerLabel ? (
+          <div className="desktop-server-banner">
+            <div>
+              <strong>{currentServerLabel}</strong>
+              {currentServerUrl ? <div className="desktop-server-banner__url">{currentServerUrl}</div> : null}
+            </div>
+            {onManageServers ? (
+              <button className="ghost-button" onClick={onManageServers} type="button">
+                Servers
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {mode === 'login' ? (
           <div className="auth-column" onKeyDown={onLoginKeyDown}>
             <div className="auth-column__title">Login</div>

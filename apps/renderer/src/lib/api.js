@@ -7,8 +7,34 @@ export class ApiError extends Error {
   }
 }
 
+let runtimeApiBaseUrl = ''
+
+function isAbsoluteUrl(value) {
+  return /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(String(value || ''))
+}
+
+function normalizeBaseUrl(value) {
+  const trimmed = String(value || '').trim()
+  return trimmed ? trimmed.replace(/\/+$/, '') : ''
+}
+
+export function configureApiBaseUrl(baseUrl) {
+  runtimeApiBaseUrl = normalizeBaseUrl(baseUrl)
+}
+
+export function resolveApiUrl(url) {
+  const value = String(url || '').trim()
+  if (!value || isAbsoluteUrl(value)) {
+    return value
+  }
+  if (!runtimeApiBaseUrl) {
+    return value
+  }
+  return new URL(value.replace(/^\//, ''), `${runtimeApiBaseUrl}/`).toString()
+}
+
 export async function api(url, options = {}) {
-  const response = await fetch(url, {
+  const response = await fetch(resolveApiUrl(url), {
     credentials: 'same-origin',
     ...options,
   })
@@ -27,9 +53,8 @@ export async function api(url, options = {}) {
 export function uploadWithProgress(url, formData, onProgress) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
-    request.open('POST', url)
+    request.open('POST', resolveApiUrl(url))
     request.responseType = 'json'
-    request.withCredentials = true
 
     request.upload.onprogress = (event) => {
       if (!event.lengthComputable) {

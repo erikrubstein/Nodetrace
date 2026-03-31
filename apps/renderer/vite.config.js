@@ -10,6 +10,7 @@ const port = Number(process.env.VITE_PORT || 5173)
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: './',
   root: rendererDir,
   plugins: [react()],
   build: {

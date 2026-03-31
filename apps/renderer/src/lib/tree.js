@@ -2,6 +2,7 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
 } from './constants'
+import { resolveApiUrl } from './api'
 
 export function countDescendants(node) {
   if (!node) {
@@ -572,7 +573,18 @@ export function compactNodePath(path, options = {}) {
 }
 
 export function buildClientTree(project, rows) {
-  const normalizedRows = rows || []
+  const normalizedRows = (rows || []).map((node) => ({
+    ...node,
+    imageUrl: resolveApiUrl(node.imageUrl),
+    previewUrl: resolveApiUrl(node.previewUrl),
+    media: Array.isArray(node.media)
+      ? node.media.map((media) => ({
+          ...media,
+          imageUrl: resolveApiUrl(media.imageUrl),
+          previewUrl: resolveApiUrl(media.previewUrl),
+        }))
+      : [],
+  }))
   const byId = new Map(normalizedRows.map((node) => [node.id, { ...node, children: [] }]))
   let root = null
 

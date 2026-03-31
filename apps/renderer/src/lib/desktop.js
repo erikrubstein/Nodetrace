@@ -33,3 +33,31 @@ export function getDesktopWindowState() {
 export function subscribeDesktopWindowState(callback) {
   return window.nodetraceDesktop?.onWindowStateChange?.(callback) || (() => {})
 }
+
+export function getDesktopServerState() {
+  return window.nodetraceDesktop?.getServerState?.() || Promise.resolve({
+    profiles: [],
+    selectedProfileId: null,
+    proxyBaseUrl: '',
+  })
+}
+
+export function createDesktopServerProfile(profile) {
+  return window.nodetraceDesktop?.createServerProfile?.(profile) || Promise.resolve(null)
+}
+
+export function updateDesktopServerProfile(id, profile) {
+  return window.nodetraceDesktop?.updateServerProfile?.(id, profile) || Promise.resolve(null)
+}
+
+export function deleteDesktopServerProfile(id) {
+  return window.nodetraceDesktop?.deleteServerProfile?.(id) || Promise.resolve(null)
+}
+
+export function selectDesktopServerProfile(id) {
+  return window.nodetraceDesktop?.selectServerProfile?.(id) || Promise.resolve(null)
+}
+
+export function subscribeDesktopServerState(callback) {
+  return window.nodetraceDesktop?.onServerStateChange?.(callback) || (() => {})
+}

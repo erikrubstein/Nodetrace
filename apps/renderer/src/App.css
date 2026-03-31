@@ -174,6 +174,10 @@ select {
   gap: 14px;
 }
 
+.auth-shell--server-manager {
+  width: min(680px, 100%);
+}
+
 .mobile-entry-shell {
   width: min(520px, 100%);
 }
@@ -207,6 +211,116 @@ select {
   padding: 22px;
   display: grid;
   gap: 18px;
+}
+
+.desktop-server-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--control-bg);
+}
+
+.desktop-server-banner__url {
+  color: var(--muted);
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
+.desktop-server-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(6, 8, 12, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.desktop-server-manager__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.desktop-server-manager__lead {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.desktop-server-manager__list {
+  display: grid;
+  gap: 10px;
+}
+
+.desktop-server-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--control-bg);
+  border: 1px solid transparent;
+}
+
+.desktop-server-item.is-selected {
+  border-color: var(--accent);
+}
+
+.desktop-server-item__meta {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.desktop-server-item__name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.desktop-server-item__badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(111, 156, 255, 0.16);
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+
+.desktop-server-item__url {
+  color: var(--muted);
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
+.desktop-server-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.desktop-server-manager__form {
+  display: grid;
+  gap: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.desktop-server-manager__form-title {
+  font-size: 0.92rem;
+}
+
+.desktop-server-manager__form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .mobile-entry-card {

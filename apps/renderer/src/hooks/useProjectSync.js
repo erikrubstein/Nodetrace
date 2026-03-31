@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { ApiError, api } from '../lib/api'
+import { ApiError, api, resolveApiUrl } from '../lib/api'
 import { getUrlState, updateUrlState } from '../lib/urlState'
 import { debugLog } from '../lib/debug'
 import { normalizeServerTree } from '../lib/tree'
@@ -262,7 +262,7 @@ export default function useProjectSync({
       return undefined
     }
 
-    const stream = new EventSource(`/api/projects/${selectedProjectId}/events`)
+    const stream = new EventSource(resolveApiUrl(`/api/projects/${selectedProjectId}/events`))
     stream.onmessage = (event) => {
       const payload = JSON.parse(event.data || '{}')
 
