@@ -191,10 +191,13 @@ Nodetrace exposes a `/capture` page for phone uploads tied to the current deskto
 
 ## Storage
 
-By default Nodetrace stores local data in:
+Project data is owned by the separate `Nodetrace-Server` repo.
 
-- database: `data/database.db`
-- uploaded media: `data/uploads/<project-id>/...`
+The client repo does not persist projects, uploads, or auth sessions as application data.
+
+During the current migration, the live server still points at the existing local data folder:
+
+- `C:\SolaSec\Tools\Nodetrace\Nodetrace-Client\data`
 
 Each image keeps:
 
@@ -252,6 +255,13 @@ Run the normal development setup:
 npm run dev
 ```
 
+Run the server separately from the `Nodetrace-Server` repo:
+
+```bash
+cd ../Nodetrace-Server
+npm run dev
+```
+
 Run desktop development:
 
 ```bash
@@ -265,6 +275,18 @@ By default:
 
 The client repo does not start or manage the server. Run the backend separately.
 
+Desktop behavior:
+
+- desktop keeps its own saved server profiles
+- desktop can switch between multiple servers
+- each server keeps its own login session
+- the desktop shell talks to servers through a local Electron proxy
+
+Web behavior:
+
+- web uses one backend at a time
+- no server picker is shown in the browser
+
 Release-oriented manual verification lives in [QA_CHECKLIST.md](C:/SolaSec/Tools/Nodetrace/QA_CHECKLIST.md).
 
 Useful root scripts:
@@ -272,7 +294,7 @@ Useful root scripts:
 - `npm run dev` - renderer web dev
 - `npm run dev:desktop` - renderer + Electron desktop dev against a running server
 - `npm run dev:renderer` - renderer only
-- `npm run start:desktop` - Electron app
+- `npm run start:desktop` - Electron app using the built local renderer
 - `npm run build` - build the renderer into `dist`
 - `npm run preview:web` - preview the built renderer
 - `npm run lint` - lint the whole repo

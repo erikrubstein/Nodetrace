@@ -27,6 +27,11 @@ There are three layers that matter most:
 3. The canvas is a projection of normalized tree data.
    The server returns a user-specific tree payload; the client derives display relationships and positions locally.
 
+Runtime split:
+
+- web runs in single-server mode and talks to one backend origin
+- desktop runs in multi-server mode and selects a backend profile locally
+
 When adding a feature, decide first which layer owns it:
 
 - server if it must persist, be shared, or be permission-checked
@@ -93,6 +98,11 @@ Pure helpers live in:
 - [apps/renderer/src/lib/tree.js](/C:/SolaSec/Tools/Nodetrace/apps/renderer/src/lib/tree.js)
 - [apps/renderer/src/lib/urlState.js](/C:/SolaSec/Tools/Nodetrace/apps/renderer/src/lib/urlState.js)
 
+`api.js` is runtime-aware:
+
+- web keeps relative same-origin API paths
+- desktop resolves API, SSE, and media URLs through the local Electron proxy
+
 Stateful workflow hooks live in:
 
 - [apps/renderer/src/hooks/useProjectSync.js](/C:/SolaSec/Tools/Nodetrace/apps/renderer/src/hooks/useProjectSync.js)
@@ -116,7 +126,9 @@ The Electron layer owns:
 - desktop window creation
 - custom title bar controls
 - popped-out panel windows
-- connecting to an external server in desktop mode
+- saved desktop server profiles
+- a local reverse proxy that forwards desktop traffic to the selected server
+- connecting to an external server in desktop mode without changing the shared renderer logic
 
 ## Domain Model
 
@@ -506,7 +518,7 @@ Useful scripts:
 - `npm run dev` - renderer web dev
 - `npm run dev:desktop` - renderer + Electron desktop dev against a running server
 - `npm run dev:renderer` - renderer only
-- `npm run start:desktop` - Electron app
+- `npm run start:desktop` - Electron app using the built local renderer
 - `npm run build` - build the renderer
 - `npm run preview:web` - preview the built renderer
 - `npm run test:e2e` - Playwright smoke test
