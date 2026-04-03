@@ -239,10 +239,10 @@ function MainApp() {
   const loadedUiSignatureRef = useRef('')
   const pendingUiSignatureRef = useRef(null)
   const uiRequestSequenceRef = useRef(0)
-  const sidebarUiSignatureRef = useRef('')
   const selectedLayoutAnchorRef = useRef({ nodeId: null, x: null, y: null })
   const pendingFocusNodeIdRef = useRef(null)
   const presenceRequestSequenceRef = useRef(0)
+  const webAuthBootstrapCompleteRef = useRef(false)
   const projectPickerRequestSequenceRef = useRef(0)
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
   const applyTreePayload = useCallback((payload) => {
@@ -961,7 +961,6 @@ function MainApp() {
     pendingInitialCanvasFitRef.current = false
     loadedUiSignatureRef.current = ''
     pendingUiSignatureRef.current = null
-    sidebarUiSignatureRef.current = ''
   }, [selectedProjectId])
 
   useEffect(() => {
@@ -1165,7 +1164,22 @@ function MainApp() {
   ])
 
   useEffect(() => {
-    if (desktopEnvironment && !desktopServerReady) {
+    if (desktopEnvironment) {
+      return
+    }
+    if (webAuthBootstrapCompleteRef.current) {
+      return
+    }
+    webAuthBootstrapCompleteRef.current = true
+    loadCurrentUser().catch((loadError) => {
+      handleAuthLost()
+      setError(loadError.message)
+      setStatus('Unable to initialize authentication.')
+    })
+  }, [desktopEnvironment, handleAuthLost, loadCurrentUser])
+
+  useEffect(() => {
+    if (!desktopEnvironment || !desktopServerReady) {
       return
     }
     loadCurrentUser().catch((loadError) => {
@@ -1275,6 +1289,7 @@ function MainApp() {
     clearHistory,
     captureSessionId: currentUser?.captureSessionId || '',
     currentUser,
+    desktopEnvironment,
     onAuthLost: handleAuthLost,
     pendingLocalEventsRef,
     selectedNode,
@@ -1395,7 +1410,6 @@ function MainApp() {
     setCanvasIsolationMode('none')
     pendingUiSignatureRef.current = null
     loadedUiSignatureRef.current = ''
-    sidebarUiSignatureRef.current = ''
   }, [selectedProjectId])
 
   useEffect(() => {
@@ -1511,10 +1525,12 @@ function MainApp() {
       }
     }
 
+    const refreshIntervalMs = desktopEnvironment ? 2500 : 10000
+
     void refreshPresence()
     const intervalHandle = window.setInterval(() => {
       void refreshPresence()
-    }, 2500)
+    }, refreshIntervalMs)
     window.addEventListener('focus', handleVisibilityChange)
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
@@ -1524,7 +1540,7 @@ function MainApp() {
       window.removeEventListener('focus', handleVisibilityChange)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [currentUser, handleAuthLost, selectedProjectId])
+  }, [currentUser, desktopEnvironment, handleAuthLost, selectedProjectId])
 
   useEffect(() => {
     if (resolvedLeftActivePanel !== leftActivePanel) {
@@ -1818,7 +1834,7 @@ function MainApp() {
         pendingUiSignatureRef.current = null
         setError(saveError.message)
       })
-    }, 180)
+    }, 500)
 
     return () => {
       window.clearTimeout(handle)
@@ -1833,62 +1849,6 @@ function MainApp() {
     resolvedLeftActivePanel,
     resolvedRightActivePanel,
     rightActivePanel,
-    rightSidebarOpen,
-    rightSidebarWidth,
-    selectedProjectId,
-    effectiveSelectedNodeIds,
-    showGrid,
-    transform,
-    tree?.project,
-    projectUiReady,
-  ])
-
-  useEffect(() => {
-    if (!currentUser || !selectedProjectId || !tree?.project || !loadedUiSignatureRef.current || !projectUiReady) {
-      return undefined
-    }
-
-    const nextUi = {
-      showGrid,
-      canvasTransform: transform,
-      selectedNodeIds: effectiveSelectedNodeIds,
-      leftSidebarOpen,
-      rightSidebarOpen,
-      leftSidebarWidth,
-      rightSidebarWidth,
-      leftActivePanel: resolvedLeftActivePanel,
-      rightActivePanel: resolvedRightActivePanel,
-      panelDock,
-    }
-    const sidebarSignature = JSON.stringify({
-      leftSidebarOpen,
-      rightSidebarOpen,
-      leftActivePanel: resolvedLeftActivePanel,
-      rightActivePanel: resolvedRightActivePanel,
-      panelDock,
-    })
-    if (sidebarSignature === sidebarUiSignatureRef.current) {
-      return undefined
-    }
-    sidebarUiSignatureRef.current = sidebarSignature
-
-    const handle = window.setTimeout(() => {
-      pendingUiSignatureRef.current = JSON.stringify(nextUi)
-      patchProjectPreferencesRequest(selectedProjectId, nextUi).catch((saveError) => {
-        pendingUiSignatureRef.current = null
-        setError(saveError.message)
-      })
-    }, 10)
-
-    return () => window.clearTimeout(handle)
-  }, [
-    currentUser,
-    leftSidebarOpen,
-    leftSidebarWidth,
-    panelDock,
-    patchProjectPreferencesRequest,
-    resolvedLeftActivePanel,
-    resolvedRightActivePanel,
     rightSidebarOpen,
     rightSidebarWidth,
     selectedProjectId,

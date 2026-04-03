@@ -13,6 +13,7 @@ export default function useProjectSync({
   captureSessionId,
   clearHistory,
   currentUser,
+  desktopEnvironment = false,
   onAuthLost,
   pendingLocalEventsRef,
   selectedNode,
@@ -173,9 +174,10 @@ export default function useProjectSync({
       }
     }
 
+    const refreshIntervalMs = desktopEnvironment ? 5000 : 30000
     const handle = window.setInterval(() => {
       void refreshProjects()
-    }, 5000)
+    }, refreshIntervalMs)
 
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
@@ -192,7 +194,7 @@ export default function useProjectSync({
       window.removeEventListener('focus', refreshProjects)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [currentUserId, loadProjects, onAuthLost, selectedProjectId, setError])
+  }, [currentUserId, desktopEnvironment, loadProjects, onAuthLost, selectedProjectId, setError])
 
   useEffect(() => {
     clearHistory()
@@ -288,14 +290,16 @@ export default function useProjectSync({
       }
     }
 
+    const refreshIntervalMs = desktopEnvironment ? 5000 : 15000
+
     void refreshSessionConnections()
-    const handle = window.setInterval(refreshSessionConnections, 5000)
+    const handle = window.setInterval(refreshSessionConnections, refreshIntervalMs)
 
     return () => {
       cancelled = true
       window.clearInterval(handle)
     }
-  }, [captureSessionId, onAuthLost, selectedProjectId, setMobileConnectionCount])
+  }, [captureSessionId, desktopEnvironment, onAuthLost, selectedProjectId, setMobileConnectionCount])
 
   useEffect(() => {
     if (!currentUserId || selectedProjectId == null) {
