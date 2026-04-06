@@ -852,6 +852,48 @@ function MainApp() {
     [focusPathContext.nextById, focusPathContext.pathIds, selectedNodeId, tree?.root],
   )
   const layout = useMemo(() => buildLayout(visibleRoot, projectSettings), [projectSettings, visibleRoot])
+  const activeCanvasImageUrls = useMemo(() => {
+    if (!selectedProjectId || tree?.project?.id !== selectedProjectId) {
+      return []
+    }
+
+    const urls = new Set()
+    for (const item of layout.nodes || []) {
+      if (item.node.type === 'collapsed-group') {
+        for (const preview of item.node.previewItems || []) {
+          if (preview?.imageUrl) {
+            urls.add(preview.imageUrl)
+          }
+        }
+        continue
+      }
+
+      const nodeImageUrl = item.node.previewUrl || item.node.imageUrl
+      if (nodeImageUrl) {
+        urls.add(nodeImageUrl)
+      }
+    }
+
+    return Array.from(urls)
+  }, [layout.nodes, selectedProjectId, tree?.project?.id])
+  const loadedCanvasImageCount = useMemo(
+    () => activeCanvasImageUrls.filter((url) => loadedImages[url]).length,
+    [activeCanvasImageUrls, loadedImages],
+  )
+  const projectLoadProgress = useMemo(() => {
+    if (projectTreeLoading) {
+      return 0
+    }
+    if (!activeCanvasImageUrls.length) {
+      return 1
+    }
+    return Math.max(0, Math.min(1, loadedCanvasImageCount / activeCanvasImageUrls.length))
+  }, [activeCanvasImageUrls.length, loadedCanvasImageCount, projectTreeLoading])
+  const projectVisualLoading =
+    !projectTreeLoading &&
+    activeCanvasImageUrls.length > 0 &&
+    loadedCanvasImageCount < activeCanvasImageUrls.length
+  const projectLoading = projectTreeLoading || projectVisualLoading
   const contextMenuNode = tree?.nodes.find((node) => node.id === contextMenu?.nodeId) || null
   const identificationTemplateRemovalNodeIds = useMemo(
     () => identificationTemplateRemoval?.nodeIds || [],
@@ -1109,6 +1151,7 @@ function MainApp() {
     pendingInitialCanvasFitRef.current = false
     loadedUiSignatureRef.current = ''
     pendingUiSignatureRef.current = null
+    setLoadedImages({})
   }, [selectedProjectId])
 
   useEffect(() => {
@@ -4852,7 +4895,8 @@ function MainApp() {
         pendingUploadMode={pendingUploadMode}
         pendingUploadParentId={pendingUploadParentId}
         presenceUsers={remotePresenceUsers}
-        projectLoading={projectTreeLoading}
+        projectLoading={projectLoading}
+        projectLoadProgress={projectLoadProgress}
         projectName={activeProjectDisplayName}
         desktopWindowMaximized={desktopWindowMaximized}
         redo={redo}

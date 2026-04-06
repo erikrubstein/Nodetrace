@@ -1131,37 +1131,21 @@ body.capture-route #root {
 
 .project-chip__loading-indicator {
   position: relative;
-  width: 34px;
-  height: 4px;
+  width: 72px;
+  height: 5px;
   flex: 0 0 auto;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--menu-active);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 
 .project-chip__loading-bar {
   position: absolute;
-  inset: 0 auto 0 -40%;
-  width: 40%;
+  inset: 0 auto 0 0;
   border-radius: inherit;
   background: var(--text);
-  animation: project-chip-loading 1.05s ease-in-out infinite;
-}
-
-@keyframes project-chip-loading {
-  0% {
-    transform: translateX(0);
-    opacity: 0.65;
-  }
-
-  50% {
-    opacity: 1;
-  }
-
-  100% {
-    transform: translateX(185%);
-    opacity: 0.65;
-  }
+  transition: width 180ms ease;
 }
 
 .topbar__separator {

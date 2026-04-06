@@ -31,6 +31,7 @@ export default function TopBar({
   onPresenceSelect,
   presenceUsers,
   projectLoading = false,
+  projectLoadProgress = 0,
   projectName,
   redo,
   appendChildren,
@@ -71,6 +72,7 @@ export default function TopBar({
   showDesktopControls = false,
   style,
 }) {
+  const projectLoadPercent = Math.max(0, Math.min(100, Math.round(projectLoadProgress * 100)))
   return (
     <header className={`topbar ${showDesktopControls ? 'topbar--desktop' : ''}`} style={style}>
       <div className="topbar__left topbar__no-drag">
@@ -530,8 +532,16 @@ export default function TopBar({
         <div className={`project-chip ${projectLoading ? 'project-chip--loading' : ''}`.trim()}>
           <span className="project-chip__label">{projectName || 'No project'}</span>
           {projectLoading ? (
-            <span aria-hidden="true" className="project-chip__loading-indicator">
-              <span className="project-chip__loading-bar" />
+            <span className="icon-button-wrap project-chip__loading-wrap">
+              <span aria-hidden="true" className="project-chip__loading-indicator">
+                <span
+                  className="project-chip__loading-bar"
+                  style={{ width: `${Math.max(8, projectLoadPercent)}%` }}
+                />
+              </span>
+              <span aria-hidden="true" className="icon-tooltip">
+                {`Progress: ${projectLoadPercent}%`}
+              </span>
             </span>
           ) : null}
         </div>

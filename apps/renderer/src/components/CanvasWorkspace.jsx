@@ -358,6 +358,8 @@ export default function CanvasWorkspace({
                         src={preview.imageUrl}
                         alt=""
                         draggable="false"
+                        onError={() => markImageLoaded(preview.imageUrl)}
+                        onLoad={() => markImageLoaded(preview.imageUrl)}
                       />
                     ) : (
                       <div key={preview.id} className="graph-node__collapsed-thumb graph-node__collapsed-placeholder">
