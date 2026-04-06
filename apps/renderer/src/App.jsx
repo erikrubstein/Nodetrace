@@ -700,6 +700,10 @@ function MainApp() {
     () => effectiveSelectedNodeIds.map((nodeId) => tree?.nodes.find((node) => node.id === nodeId)).filter(Boolean),
     [effectiveSelectedNodeIds, tree?.nodes],
   )
+  const treeNodeById = useMemo(
+    () => new Map((tree?.nodes || []).map((node) => [node.id, node])),
+    [tree?.nodes],
+  )
   const effectiveSelectedRootIds = useMemo(
     () => getSelectionRootIds(tree?.root, effectiveSelectedNodeIds),
     [effectiveSelectedNodeIds, tree?.root],
@@ -879,6 +883,44 @@ function MainApp() {
     }
     return nextMap
   }, [remotePresenceUsers])
+  const canCollapseSelected = useMemo(
+    () =>
+      effectiveSelectedNodeIds.some((nodeId) => {
+        const node = treeNodeById.get(nodeId)
+        return Boolean(node?.children?.length && !node.collapsed)
+      }),
+    [effectiveSelectedNodeIds, treeNodeById],
+  )
+  const canExpandSelected = useMemo(
+    () =>
+      effectiveSelectedNodeIds.some((nodeId) => {
+        const node = treeNodeById.get(nodeId)
+        return Boolean(node?.collapsed)
+      }),
+    [effectiveSelectedNodeIds, treeNodeById],
+  )
+  const canCollapseRecursively = useMemo(
+    () =>
+      effectiveSelectedNodeIds.some((nodeId) => {
+        let current = treeNodeById.get(nodeId) || null
+        while (current?.parent_id) {
+          current = treeNodeById.get(current.parent_id) || null
+          if (current) {
+            return true
+          }
+        }
+        return false
+      }),
+    [effectiveSelectedNodeIds, treeNodeById],
+  )
+  const canExpandRecursively = useMemo(
+    () =>
+      effectiveSelectedNodeIds.some((nodeId) => {
+        const subtreeNode = tree?.root ? findNode(tree.root, nodeId) : null
+        return Boolean(subtreeNode?.children?.length)
+      }),
+    [effectiveSelectedNodeIds, tree?.root],
+  )
   const selectedTemplateEditor =
     identificationTemplates.find((template) => template.id === selectedTemplateEditorId) || null
   const hasTemplateChanges = useMemo(() => {
@@ -3736,6 +3778,74 @@ function MainApp() {
     }
   }, [applyCollapsedState, beginLocalEventExpectation, pushHistory, selectedNodeId, setCollapsedRequest, tree?.nodes, tree?.root])
 
+  const setSelectedNodesCollapsed = useCallback(async (collapsed) => {
+    if (!effectiveSelectedNodeIds.length || !tree?.nodes?.length) {
+      return
+    }
+
+    const targetIds = Array.from(
+      new Set(
+        effectiveSelectedNodeIds.filter((nodeId) => {
+          const node = treeNodeById.get(nodeId)
+          if (!node) {
+            return false
+          }
+          return collapsed ? Boolean(node.children?.length && !node.collapsed) : Boolean(node.collapsed)
+        }),
+      ),
+    )
+
+    if (!targetIds.length) {
+      return
+    }
+
+    for (const nodeId of targetIds) {
+      await setCollapsed(nodeId, collapsed)
+    }
+  }, [effectiveSelectedNodeIds, setCollapsed, tree?.nodes?.length, treeNodeById])
+
+  const setSelectedNodesCollapsedRecursively = useCallback(async (collapsed) => {
+    if (!effectiveSelectedNodeIds.length || !tree?.nodes?.length) {
+      return
+    }
+
+    const targetIds = new Set()
+
+    if (collapsed) {
+      for (const nodeId of effectiveSelectedNodeIds) {
+        const node = treeNodeById.get(nodeId) || null
+        if (node?.children?.length && !node.collapsed) {
+          targetIds.add(node.id)
+        }
+        let current = node
+        while (current?.parent_id) {
+          current = treeNodeById.get(current.parent_id) || null
+          if (current?.children?.length && !current.collapsed) {
+            targetIds.add(current.id)
+          }
+        }
+      }
+    } else {
+      for (const nodeId of effectiveSelectedNodeIds) {
+        const subtreeNode = tree?.root ? findNode(tree.root, nodeId) : null
+        for (const descendantId of collectDescendantIds(subtreeNode)) {
+          const node = treeNodeById.get(descendantId)
+          if (node?.collapsed) {
+            targetIds.add(descendantId)
+          }
+        }
+      }
+    }
+
+    if (!targetIds.size) {
+      return
+    }
+
+    for (const nodeId of targetIds) {
+      await setCollapsed(nodeId, collapsed)
+    }
+  }, [effectiveSelectedNodeIds, setCollapsed, tree?.nodes?.length, tree?.root, treeNodeById])
+
   const selectNodeAndFocus = useCallback(async (nodeId) => {
     if (!nodeId || !tree?.nodes?.length) {
       return
@@ -4559,6 +4669,10 @@ function MainApp() {
         appendParents={appendParents}
         appendSearchResults={appendSearchResults}
         busy={busy}
+        canCollapseRecursively={canCollapseRecursively}
+        canCollapseSelected={canCollapseSelected}
+        canExpandRecursively={canExpandRecursively}
+        canExpandSelected={canExpandSelected}
         fileInputRef={fileInputRef}
         focusSelectedNode={focusSelectedNode}
         fitCanvasToView={fitCanvasToView}
@@ -4581,11 +4695,14 @@ function MainApp() {
         redo={redo}
         invertSelection={invertEffectiveSelection}
         manageAccountsLabel={desktopEnvironment ? 'Manage Server Profiles' : 'Manage Account'}
+        canvasIsolationMode={canvasIsolationMode}
         rightSidebarOpen={effectiveRightSidebarOpen}
         selectedNode={selectedNode}
         selectedProjectId={selectedProjectId}
         selectionCount={effectiveSelectedNodeIds.length}
         openNewNodeDialog={openNewNodeDialog}
+        setCollapsedRecursively={setSelectedNodesCollapsedRecursively}
+        setCollapsedSelected={setSelectedNodesCollapsed}
         setAllNodesCollapsed={setAllNodesCollapsed}
         setDeleteNodeOpen={setDeleteNodeOpen}
         setDeleteProjectText={setDeleteProjectText}
@@ -4605,6 +4722,12 @@ function MainApp() {
         theme={theme}
         triggerAddPhoto={triggerAddPhoto}
         triggerAddPhotoNode={triggerAddPhotoNode}
+        togglePathIsolation={() =>
+          setCanvasIsolationMode((current) => (current === 'path' ? 'none' : 'path'))
+        }
+        toggleSearchIsolation={() =>
+          setCanvasIsolationMode((current) => (current === 'search' ? 'none' : 'search'))
+        }
         toggleSidebarPanel={toggleSidebarPanel}
         tree={tree}
         undo={undo}

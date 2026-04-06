@@ -10,6 +10,11 @@ const brandLogoUrl = resolvePublicAssetUrl('nodetrace.svg')
 
 export default function TopBar({
   busy,
+  canCollapseRecursively = false,
+  canCollapseSelected = false,
+  canExpandRecursively = false,
+  canExpandSelected = false,
+  canvasIsolationMode = 'none',
   desktopWindowMaximized = false,
   fileInputRef,
   fitCanvasToView,
@@ -35,6 +40,8 @@ export default function TopBar({
   selectedNode,
   selectedProjectId,
   selectionCount,
+  setCollapsedRecursively,
+  setCollapsedSelected,
   setAllNodesCollapsed,
   setDeleteNodeOpen,
   setExportFileName,
@@ -51,6 +58,8 @@ export default function TopBar({
   triggerAddPhoto,
   triggerAddPhotoNode,
   toggleTheme,
+  togglePathIsolation,
+  toggleSearchIsolation,
   tree,
   undo,
   uploadFiles,
@@ -345,6 +354,86 @@ export default function TopBar({
 
         <div className="menu-wrap">
           <button
+            className={`menu-trigger ${openMenu === 'tree' ? 'active' : ''}`}
+            onClick={() => setOpenMenu((current) => (current === 'tree' ? null : 'tree'))}
+            type="button"
+          >
+            Tree
+          </button>
+          {openMenu === 'tree' ? (
+            <div className="menu-panel">
+              <button
+                className="menu-item"
+                disabled={!tree?.nodes?.length || busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  void setAllNodesCollapsed(true)
+                }}
+                type="button"
+              >
+                Collapse All
+              </button>
+              <button
+                className="menu-item"
+                disabled={!canCollapseSelected || busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  void setCollapsedSelected(true)
+                }}
+                type="button"
+              >
+                Collapse Selected
+              </button>
+              <button
+                className="menu-item"
+                disabled={!canCollapseRecursively || busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  void setCollapsedRecursively(true)
+                }}
+                type="button"
+              >
+                Collapse Recursively
+              </button>
+              <button
+                className="menu-item"
+                disabled={!tree?.nodes?.length || busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  void setAllNodesCollapsed(false)
+                }}
+                type="button"
+              >
+                Expand All
+              </button>
+              <button
+                className="menu-item"
+                disabled={!canExpandSelected || busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  void setCollapsedSelected(false)
+                }}
+                type="button"
+              >
+                Expand Selected
+              </button>
+              <button
+                className="menu-item"
+                disabled={!canExpandRecursively || busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  void setCollapsedRecursively(false)
+                }}
+                type="button"
+              >
+                Expand Recursively
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="menu-wrap">
+          <button
             className={`menu-trigger ${openMenu === 'view' ? 'active' : ''}`}
             onClick={() => setOpenMenu((current) => (current === 'view' ? null : 'view'))}
             type="button"
@@ -355,19 +444,25 @@ export default function TopBar({
             <div className="menu-panel">
               <button
                 className="menu-item"
-                disabled={!tree?.nodes?.length || busy || focusPathMode}
-                onClick={() => void setAllNodesCollapsed(true)}
+                disabled={busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  toggleSearchIsolation()
+                }}
                 type="button"
               >
-                Collapse All
+                {canvasIsolationMode === 'search' ? 'Show All Nodes' : 'Show Results Only'}
               </button>
               <button
                 className="menu-item"
-                disabled={!tree?.nodes?.length || busy || focusPathMode}
-                onClick={() => void setAllNodesCollapsed(false)}
+                disabled={!selectedNode || busy}
+                onClick={() => {
+                  setOpenMenu(null)
+                  togglePathIsolation()
+                }}
                 type="button"
               >
-                Expand All
+                {canvasIsolationMode === 'path' ? 'Show All Nodes' : 'Show Ancestors Only'}
               </button>
               <button
                 className="menu-item"
