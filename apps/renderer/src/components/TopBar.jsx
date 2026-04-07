@@ -1,9 +1,7 @@
 import IconButton from './IconButton'
 import { resolvePublicAssetUrl } from '../lib/runtimePaths'
 import {
-  MoonIcon,
   PhoneIcon,
-  SunIcon,
 } from './icons'
 
 const brandLogoUrl = resolvePublicAssetUrl('nodetrace.svg')
@@ -52,20 +50,22 @@ export default function TopBar({
   setOpenMenu,
   setSessionDialogOpen,
   setShowProjectDialog,
-  selectChildren,
-  selectParents,
-  selectSearchResults,
   theme,
   triggerAddPhoto,
   triggerAddPhotoNode,
-  toggleTheme,
+  selectChildren,
+  selectParents,
+  selectSearchResults,
   togglePathIsolation,
   toggleSearchIsolation,
   tree,
   undo,
   uploadFiles,
   onCheckForUpdates = null,
-  onOpenSettings = null,
+  onOpenManageServerProfiles = null,
+  onApplyTheme = null,
+  onResetCache = null,
+  onGenerateSessionCode = null,
   onDesktopClose,
   onDesktopMinimize,
   onDesktopToggleMaximize,
@@ -486,15 +486,71 @@ export default function TopBar({
           </button>
           {openMenu === 'settings' ? (
             <div className="menu-panel">
+              {onOpenManageServerProfiles ? (
+                <button
+                  className="menu-item"
+                  onClick={() => {
+                    onOpenManageServerProfiles()
+                    setOpenMenu(null)
+                  }}
+                  type="button"
+                >
+                  Manage Server Profiles
+                </button>
+              ) : null}
+              <div className="menu-submenu-wrap">
+                <button className="menu-item" type="button">
+                  <span>Apply Theme</span>
+                  <span aria-hidden="true" className="menu-submenu-caret">
+                    <i className="fa-solid fa-chevron-right" />
+                  </span>
+                </button>
+                <div className="menu-panel menu-panel--submenu">
+                  <button
+                    className="menu-item"
+                    disabled={theme === 'dark'}
+                    onClick={() => {
+                      onApplyTheme?.('dark')
+                      setOpenMenu(null)
+                    }}
+                    type="button"
+                  >
+                    Dark
+                  </button>
+                  <button
+                    className="menu-item"
+                    disabled={theme === 'light'}
+                    onClick={() => {
+                      onApplyTheme?.('light')
+                      setOpenMenu(null)
+                    }}
+                    type="button"
+                  >
+                    Light
+                  </button>
+                </div>
+              </div>
               <button
                 className="menu-item"
+                disabled={busy}
                 onClick={() => {
-                  onOpenSettings?.()
+                  onResetCache?.()
                   setOpenMenu(null)
                 }}
                 type="button"
               >
-                Open Settings
+                Reset Cache
+              </button>
+              <button
+                className="menu-item"
+                disabled={busy}
+                onClick={() => {
+                  onGenerateSessionCode?.()
+                  setOpenMenu(null)
+                }}
+                type="button"
+              >
+                Generate Session Code
               </button>
             </div>
           ) : null}
@@ -614,13 +670,6 @@ export default function TopBar({
           ) : (
             <PhoneIcon />
           )}
-        </IconButton>
-        <IconButton
-          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          onClick={toggleTheme}
-          tooltip={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-        >
-          {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </IconButton>
         {showDesktopControls ? (
           <div className="desktop-window-controls">

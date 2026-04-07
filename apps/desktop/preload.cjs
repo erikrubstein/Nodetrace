@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('nodetraceDesktop', {
   changeProfileAccountPassword: (id, currentPassword, newPassword) =>
     ipcRenderer.invoke('desktop:change-profile-account-password', { id, currentPassword, newPassword }),
   deleteProfileAccount: (id, username) => ipcRenderer.invoke('desktop:delete-profile-account', { id, username }),
+  clearCache: () => ipcRenderer.invoke('desktop:clear-cache'),
   onWindowStateChange: (callback) => {
     const listener = (_event, value) => callback(value)
     ipcRenderer.on('desktop:window-state', listener)

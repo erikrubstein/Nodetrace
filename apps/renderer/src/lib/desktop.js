@@ -137,6 +137,14 @@ export function deleteDesktopProfileAccount(id, username) {
   )
 }
 
+export function clearDesktopCache() {
+  return (
+    window.nodetraceDesktop?.clearCache?.().catch((error) => {
+      throw normalizeDesktopError(error)
+    }) || Promise.resolve({ ok: true })
+  )
+}
+
 export function subscribeDesktopServerState(callback) {
   return window.nodetraceDesktop?.onServerStateChange?.(callback) || (() => {})
 }

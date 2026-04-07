@@ -93,6 +93,7 @@ export default function AppDialogs({
   templateDialog,
   setTemplateDialog,
   updateStatus = '',
+  onConfirmClearCache = null,
 }) {
   const [openProjectFilter, setOpenProjectFilter] = useState(null)
   const [connectedAccountFilter, setConnectedAccountFilter] = useState(false)
@@ -181,29 +182,26 @@ export default function AppDialogs({
 
   return (
     <>
-      {appDialog === 'settings' ? (
+      {appDialog === 'clear-cache' ? (
         <div className="dialog-backdrop" onClick={() => !busy && setAppDialog(null)} role="presentation">
           <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
-            <div className="dialog__title">Settings</div>
+            <div className="dialog__title">Reset Cache</div>
             <div className="field-stack">
-              {desktopEnvironment ? (
-                <button
-                  className="ghost-button"
-                  disabled={busy}
-                  onClick={() => {
-                    setAppDialog(null)
-                    onOpenManageAccounts?.()
-                  }}
-                  type="button"
-                >
-                  Manage Server Profiles
-                </button>
-              ) : null}
-              <div className="inspector__notice">More settings will live here.</div>
+              <div className="inspector__notice">
+                Clear the local app cache and reload project assets from the server on next use.
+              </div>
             </div>
             <div className="dialog__actions">
               <button className="ghost-button" disabled={busy} onClick={() => setAppDialog(null)} type="button">
-                Close
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={busy}
+                onClick={() => void onConfirmClearCache?.()}
+                type="button"
+              >
+                Reset Cache
               </button>
             </div>
           </div>

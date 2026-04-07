@@ -22,6 +22,7 @@ export default function CanvasWorkspace({
   focusPathMode,
   handleCanvasContextMenu,
   handleCanvasPointerMove,
+  imageLoadRevision = 0,
   layout,
   loadedImages,
   markImageLoaded,
@@ -353,7 +354,7 @@ export default function CanvasWorkspace({
                   {item.node.previewItems.map((preview) =>
                     preview.imageUrl ? (
                       <img
-                        key={preview.id}
+                        key={`${preview.id}-${imageLoadRevision}`}
                         className="graph-node__collapsed-thumb"
                         src={preview.imageUrl}
                         alt=""
@@ -374,6 +375,7 @@ export default function CanvasWorkspace({
                     <div className="graph-node__spinner" aria-hidden="true" />
                   ) : null}
                   <img
+                    key={`${item.node.previewUrl || item.node.imageUrl}-${imageLoadRevision}`}
                     className={
                       loadedImages[item.node.previewUrl || item.node.imageUrl]
                         ? 'graph-node__image'

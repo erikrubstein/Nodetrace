@@ -29,6 +29,7 @@ import {
   closeDesktopWindow,
   changeDesktopProfileAccountPassword,
   changeDesktopProfileAccountUsername,
+  clearDesktopCache,
   createDesktopProjectForProfile,
   createDesktopServerProfile,
   deleteDesktopProfileAccount,
@@ -199,6 +200,7 @@ function MainApp() {
   const [cameraNotice, setCameraNotice] = useState('')
   const [cameraSelection, setCameraSelection] = useState(null)
   const [loadedImages, setLoadedImages] = useState({})
+  const [imageLoadRevision, setImageLoadRevision] = useState(0)
   const [projectPresenceUsers, setProjectPresenceUsers] = useState([])
   const [searchResultNodeIds, setSearchResultNodeIds] = useState([])
   const [searchResultsInitialized, setSearchResultsInitialized] = useState(false)
@@ -548,10 +550,8 @@ function MainApp() {
     pendingUiSignatureRef.current = JSON.stringify(nextUi)
   }
 
-  function toggleThemePreference() {
-    setTheme((current) => {
-      return current === 'dark' ? 'light' : 'dark'
-    })
+  function applyThemePreference(nextTheme) {
+    setTheme(nextTheme === 'light' ? 'light' : 'dark')
   }
 
   function toggleGridPreference() {
@@ -1241,11 +1241,6 @@ function MainApp() {
     setAccountDialog('overview')
   }, [desktopEnvironment, refreshDesktopServerState, showProjectDialog])
 
-  const openAppSettings = useCallback(() => {
-    setError('')
-    setAppDialog('settings')
-  }, [])
-
   const checkForUpdates = useCallback(async () => {
     setError('')
     setUpdateStatus('Checking for updates...')
@@ -1293,6 +1288,43 @@ function MainApp() {
     }
     setAccountDialog(dialog)
   }, [desktopAccountManagerFocusId, desktopEnvironment])
+
+  const openCacheResetDialog = useCallback(() => {
+    setError('')
+    setAppDialog('clear-cache')
+  }, [])
+
+  const generateNewSessionCode = useCallback(async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const payload = await api('/api/account/capture-session', {
+        method: 'POST',
+      })
+      if (payload?.ok === false) {
+        throw new Error(payload.error || 'Unable to generate a new session code.')
+      }
+      if (payload?.captureSessionId) {
+        setCurrentUser((current) =>
+          current
+            ? {
+                ...current,
+                captureSessionId: payload.captureSessionId,
+              }
+            : current,
+        )
+      }
+      if (desktopEnvironment) {
+        await refreshDesktopServerState()
+      }
+      setSessionDialogOpen(true)
+      setStatus('New session code generated.')
+    } catch (sessionError) {
+      setError(sessionError.message || 'Unable to generate a new session code.')
+    } finally {
+      setBusy(false)
+    }
+  }, [desktopEnvironment, refreshDesktopServerState])
 
   async function syncSelectedDesktopAccount(updates) {
     if (!desktopEnvironment || !selectedDesktopServerProfile?.id) {
@@ -1532,6 +1564,31 @@ function MainApp() {
     setStatus,
     setTree,
   })
+
+  const resetClientCache = useCallback(async () => {
+    setBusy(true)
+    setError('')
+    try {
+      if (desktopEnvironment) {
+        await clearDesktopCache()
+      } else if (typeof window !== 'undefined' && 'caches' in window) {
+        const cacheKeys = await window.caches.keys()
+        await Promise.all(cacheKeys.map((key) => window.caches.delete(key)))
+      }
+
+      setLoadedImages({})
+      setImageLoadRevision((current) => current + 1)
+      if (selectedProjectId) {
+        await loadTree(selectedProjectId, selectedNodeIdRef.current)
+      }
+      setStatus('Local cache cleared.')
+      setAppDialog(null)
+    } catch (cacheError) {
+      setError(cacheError.message || 'Unable to reset cache.')
+    } finally {
+      setBusy(false)
+    }
+  }, [desktopEnvironment, loadTree, selectedProjectId])
 
   function markImageLoaded(url) {
     if (!url) {
@@ -4757,6 +4814,7 @@ function MainApp() {
         transferProgress={transferProgress}
         tree={tree}
         updateStatus={updateStatus}
+        onConfirmClearCache={resetClientCache}
       />
     )
   }
@@ -4926,12 +4984,14 @@ function MainApp() {
         selectParents={selectParents}
         selectSearchResults={selectSearchResults}
         searchResultCount={effectiveSearchResultNodeIds.length}
-        toggleTheme={toggleThemePreference}
         theme={theme}
         triggerAddPhoto={triggerAddPhoto}
         triggerAddPhotoNode={triggerAddPhotoNode}
         onCheckForUpdates={checkForUpdates}
-        onOpenSettings={openAppSettings}
+        onOpenManageServerProfiles={desktopEnvironment ? () => openAccountManager() : null}
+        onApplyTheme={applyThemePreference}
+        onResetCache={openCacheResetDialog}
+        onGenerateSessionCode={generateNewSessionCode}
         togglePathIsolation={() =>
           setCanvasIsolationMode((current) => (current === 'path' ? 'none' : 'path'))
         }
@@ -5005,6 +5065,7 @@ function MainApp() {
           handleCanvasPointerMove={handleCanvasPointerMove}
           layout={layout}
           loadedImages={loadedImages}
+          imageLoadRevision={imageLoadRevision}
           markImageLoaded={markImageLoaded}
           multiSelectedNodeIds={multiSelectedNodeIds}
           openNewNodeDialog={openNewNodeDialog}

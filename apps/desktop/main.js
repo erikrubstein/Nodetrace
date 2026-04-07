@@ -5,7 +5,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { app, BrowserWindow, ipcMain, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, session } from 'electron'
 import { getPanelInitialWidth, getPanelMinWidth } from '../../packages/shared/src/panelSizing.js'
 
 const desktopDir = path.dirname(fileURLToPath(import.meta.url))
@@ -1012,6 +1012,10 @@ ipcMain.handle('desktop:change-profile-account-password', (_event, payload) =>
 ipcMain.handle('desktop:delete-profile-account', (_event, payload) =>
   deleteProfileAccount(String(payload?.id || '').trim(), String(payload?.username || '').trim()),
 )
+ipcMain.handle('desktop:clear-cache', async () => {
+  await session.defaultSession.clearCache()
+  return { ok: true }
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
