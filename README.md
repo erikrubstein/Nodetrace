@@ -50,6 +50,7 @@ Every attached photo can also carry:
 
 - username/password accounts
 - project owners and collaborators
+- optional public projects visible to anyone signed into the same server
 - per-project access control
 - live collaborator presence in the top bar
 - colored node outlines showing what other users currently have selected
@@ -61,7 +62,7 @@ Every attached photo can also carry:
 - add additional photos to existing nodes
 - drag-and-drop reparenting
 - convert a node into an additional photo on another node
-- convert an attached photo into its own sibling photo node
+- convert an attached photo into its own child photo node
 - collapse and expand branches
 - multi-select nodes for bulk operations
 - right-drag marquee selection on the canvas
@@ -75,7 +76,7 @@ Every attached photo can also carry:
 - optional background grid
 - selected-node path display
 - selection-aware layout changes that keep the selected node anchored during collapse/expand
-- per-user per-project saved canvas position and zoom
+- per-client per-project saved workspace state restored from the last closed project
 
 ### Docked Panels
 
@@ -89,10 +90,9 @@ Current panels include:
 - Templates
 - Inspector
 - Data
-- Settings
-- Account
+- Project Settings
 
-Layout is saved per user and per project.
+Layout is saved per client and per project.
 
 ### Search and Filtering
 
@@ -281,6 +281,7 @@ Desktop behavior:
 - desktop can switch between multiple servers
 - each server keeps its own login session
 - the desktop shell talks to servers through a local Electron proxy
+- each desktop window keeps ephemeral workspace state while open and only persists the last closed state for that client scope
 
 Web behavior:
 
@@ -308,7 +309,7 @@ Normal local use does not require much configuration on the client side. The bac
 
 For implementation details and contribution guidance, see:
 
-- [architecture.md](./architecture.md)
+- [../architecture.md](../architecture.md)
 
 That document explains:
 
