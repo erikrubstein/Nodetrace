@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import IconButton from './IconButton'
 import { PencilIcon, PlusIcon, TrashIcon, WarningIcon } from './icons'
 
@@ -70,6 +70,7 @@ export default function DesktopServerManager({
   selectedProfileId = null,
   showDesktopControls = false,
 }) {
+  const openedAtRef = useRef(0)
   const [mode, setMode] = useState('details')
   const [editor, setEditor] = useState(createEmptyEditor())
   const [editorSubmitAttempted, setEditorSubmitAttempted] = useState(false)
@@ -206,10 +207,17 @@ export default function DesktopServerManager({
     Boolean(editor.password) &&
     (editor.authMode !== 'register' || Boolean(editor.confirmPassword))
 
+  useEffect(() => {
+    openedAtRef.current = Date.now()
+  }, [])
+
   return (
     <div
       className="dialog-backdrop"
       onClick={() => {
+        if (Date.now() - openedAtRef.current < 400) {
+          return
+        }
         if (!busy) {
           onClose?.()
         }

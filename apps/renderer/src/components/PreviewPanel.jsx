@@ -28,6 +28,7 @@ function tooltipButton({ active = false, disabled = false, iconClassName, label,
 }
 
 export default function PreviewPanel({
+  networkAvailable = true,
   beginPreviewPan,
   busy,
   extractNodeMediaToChild,
@@ -103,7 +104,7 @@ export default function PreviewPanel({
     let objectUrl = null
 
     async function loadSourceImage() {
-      if (!selectedMedia?.imageUrl) {
+      if (!networkAvailable || !selectedMedia?.imageUrl) {
         sourceImageRef.current = null
         sourceImageNodeIdRef.current = null
         if (renderCanvasRef.current) {
@@ -141,7 +142,9 @@ export default function PreviewPanel({
           sourceImageRef.current = null
           sourceImageNodeIdRef.current = null
           setImageReady(false)
-          setError(error.message || 'Unable to load the selected image.')
+          if (networkAvailable) {
+            setError(error.message || 'Unable to load the selected image.')
+          }
         }
       }
     }
@@ -154,7 +157,7 @@ export default function PreviewPanel({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [selectedMedia?.id, selectedMedia?.imageUrl, selectedNode?.id, setError])
+  }, [networkAvailable, selectedMedia?.id, selectedMedia?.imageUrl, selectedNode?.id, setError])
 
   useEffect(() => {
     const nextNodeId = selectedMedia ? `${selectedNode?.id}:${selectedMedia.id}` : selectedNode?.id ?? null
@@ -633,7 +636,7 @@ export default function PreviewPanel({
               onClick={() => setActiveMediaId(mediaItem.id)}
               type="button"
             >
-              {mediaItem.previewUrl || mediaItem.imageUrl ? (
+              {networkAvailable && (mediaItem.previewUrl || mediaItem.imageUrl) ? (
                 <img alt="" src={mediaItem.previewUrl || mediaItem.imageUrl} />
               ) : (
                 <span>{mediaItem.isPrimary ? 'Main' : 'Photo'}</span>

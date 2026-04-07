@@ -20,6 +20,7 @@ const rendererDevUrl = process.argv.find((arg) => arg.startsWith('--dev-url='))?
 
 const mainWindows = new Set()
 const pendingSplashWindows = new Map()
+const pendingSplashFallbackTimers = new Map()
 const panelWindows = new Map()
 let desktopProxyServer = null
 let desktopProxyBaseUrl = ''
@@ -30,8 +31,10 @@ let desktopState = {
   profiles: [],
   selectedProfileId: null,
   sessionCookiesByProfileId: {},
+  lastClosedWorkspaceByScopeKey: {},
 }
 let desktopProfileAuthStateById = {}
+const latestWorkspaceStateByWindowId = new Map()
 const PROFILE_STATUS_POLL_INTERVAL_MS = 5000
 
 function logDesktop(message) {
@@ -246,6 +249,10 @@ function readDesktopState() {
         parsed?.sessionCookiesByProfileId && typeof parsed.sessionCookiesByProfileId === 'object'
           ? { ...parsed.sessionCookiesByProfileId }
           : {},
+      lastClosedWorkspaceByScopeKey:
+        parsed?.lastClosedWorkspaceByScopeKey && typeof parsed.lastClosedWorkspaceByScopeKey === 'object'
+          ? { ...parsed.lastClosedWorkspaceByScopeKey }
+          : {},
     }
   } catch (error) {
     logDesktop(`Failed to read desktop state: ${error.message}`)
@@ -262,6 +269,7 @@ function writeDesktopState() {
           profiles: desktopState.profiles,
           selectedProfileId: desktopState.selectedProfileId,
           sessionCookiesByProfileId: desktopState.sessionCookiesByProfileId,
+          lastClosedWorkspaceByScopeKey: desktopState.lastClosedWorkspaceByScopeKey,
         },
         null,
         2,
@@ -270,6 +278,110 @@ function writeDesktopState() {
   } catch (error) {
     logDesktop(`Failed to write desktop state: ${error.message}`)
   }
+}
+
+function readLastClosedWorkspaceMapFromDisk() {
+  try {
+    if (!fs.existsSync(desktopStatePath)) {
+      return {}
+    }
+    const parsed = JSON.parse(fs.readFileSync(desktopStatePath, 'utf8'))
+    return parsed?.lastClosedWorkspaceByScopeKey && typeof parsed.lastClosedWorkspaceByScopeKey === 'object'
+      ? { ...parsed.lastClosedWorkspaceByScopeKey }
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function normalizeWorkspaceSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return null
+  }
+  return {
+    showGrid: snapshot.showGrid == null ? undefined : Boolean(snapshot.showGrid),
+    canvasTransform:
+      snapshot.canvasTransform &&
+      typeof snapshot.canvasTransform === 'object' &&
+      Number.isFinite(Number(snapshot.canvasTransform.x)) &&
+      Number.isFinite(Number(snapshot.canvasTransform.y)) &&
+      Number.isFinite(Number(snapshot.canvasTransform.scale))
+        ? {
+            x: Number(snapshot.canvasTransform.x),
+            y: Number(snapshot.canvasTransform.y),
+            scale: Number(snapshot.canvasTransform.scale),
+          }
+        : null,
+    selectedNodeIds: Array.isArray(snapshot.selectedNodeIds) ? snapshot.selectedNodeIds.filter(Boolean) : [],
+    leftSidebarOpen: snapshot.leftSidebarOpen == null ? undefined : Boolean(snapshot.leftSidebarOpen),
+    rightSidebarOpen: snapshot.rightSidebarOpen == null ? undefined : Boolean(snapshot.rightSidebarOpen),
+    leftSidebarWidth: Number.isFinite(Number(snapshot.leftSidebarWidth)) ? Number(snapshot.leftSidebarWidth) : undefined,
+    rightSidebarWidth: Number.isFinite(Number(snapshot.rightSidebarWidth)) ? Number(snapshot.rightSidebarWidth) : undefined,
+    leftActivePanel: typeof snapshot.leftActivePanel === 'string' ? snapshot.leftActivePanel : undefined,
+    rightActivePanel: typeof snapshot.rightActivePanel === 'string' ? snapshot.rightActivePanel : undefined,
+    panelDock: snapshot.panelDock && typeof snapshot.panelDock === 'object' ? { ...snapshot.panelDock } : undefined,
+  }
+}
+
+function getPersistedWorkspaceState(scopeKey) {
+  const normalizedScopeKey = String(scopeKey || '').trim()
+  if (!normalizedScopeKey) {
+    return null
+  }
+  const diskMap = readLastClosedWorkspaceMapFromDisk()
+  const entry = diskMap[normalizedScopeKey]
+  if (!entry || typeof entry !== 'object') {
+    return null
+  }
+  const projectId = String(entry.projectId || '').trim()
+  if (!projectId) {
+    return null
+  }
+  return {
+    projectId,
+    closedAt: Number(entry.closedAt || 0) || 0,
+    snapshot: normalizeWorkspaceSnapshot(entry.snapshot),
+  }
+}
+
+function clearPersistedWorkspaceState(scopeKey) {
+  const normalizedScopeKey = String(scopeKey || '').trim()
+  if (!normalizedScopeKey) {
+    return
+  }
+
+  const diskMap = readLastClosedWorkspaceMapFromDisk()
+  if (!Object.prototype.hasOwnProperty.call(diskMap, normalizedScopeKey)) {
+    return
+  }
+
+  delete diskMap[normalizedScopeKey]
+  desktopState.lastClosedWorkspaceByScopeKey = diskMap
+  writeDesktopState()
+}
+
+function persistLastClosedWorkspaceState(scopeKey, payload) {
+  const normalizedScopeKey = String(scopeKey || '').trim()
+  const projectId = String(payload?.projectId || '').trim()
+  if (!normalizedScopeKey || !projectId) {
+    return
+  }
+
+  const closedAt = Number.isFinite(Number(payload?.closedAt)) ? Number(payload.closedAt) : Date.now()
+  const snapshot = normalizeWorkspaceSnapshot(payload?.snapshot)
+  const diskMap = readLastClosedWorkspaceMapFromDisk()
+  const currentEntry = diskMap[normalizedScopeKey]
+  if (currentEntry && Number(currentEntry.closedAt || 0) > closedAt) {
+    return
+  }
+
+  diskMap[normalizedScopeKey] = {
+    projectId,
+    closedAt,
+    snapshot,
+  }
+  desktopState.lastClosedWorkspaceByScopeKey = diskMap
+  writeDesktopState()
 }
 
 function getSelectedServerProfile() {
@@ -739,6 +851,25 @@ function attachWindowStateListeners(window, label, options = {}) {
   })
 }
 
+function resolvePendingSplash(window, contentsId, { showWindow = true } = {}) {
+  const fallbackTimer = pendingSplashFallbackTimers.get(contentsId)
+  if (fallbackTimer) {
+    clearTimeout(fallbackTimer)
+    pendingSplashFallbackTimers.delete(contentsId)
+  }
+
+  if (window && !window.isDestroyed() && showWindow && !window.isVisible()) {
+    window.show()
+    window.focus()
+  }
+
+  const splashWindow = pendingSplashWindows.get(contentsId)
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.destroy()
+  }
+  pendingSplashWindows.delete(contentsId)
+}
+
 async function loadWindow(window, url) {
   logDesktop(`Desktop loading ${url}`)
   await window.loadURL(url)
@@ -752,6 +883,11 @@ function createMainWindow(options = {}) {
   mainWindows.add(mainWindow)
   if (splashWindow) {
     pendingSplashWindows.set(mainContentsId, splashWindow)
+    const fallbackTimer = setTimeout(() => {
+      logDesktop('Splash fallback resolved main window visibility')
+      resolvePendingSplash(mainWindow, mainContentsId, { showWindow: true })
+    }, 8000)
+    pendingSplashFallbackTimers.set(mainContentsId, fallbackTimer)
   }
   logDesktop('Created main BrowserWindow')
   attachWindowStateListeners(mainWindow, 'Main window', {
@@ -759,20 +895,21 @@ function createMainWindow(options = {}) {
   })
   mainWindow.on('closed', () => {
     logDesktop('Main window closed')
-    mainWindows.delete(mainWindow)
-    const pendingSplash = pendingSplashWindows.get(mainContentsId)
-    if (pendingSplash && !pendingSplash.isDestroyed()) {
-      pendingSplash.destroy()
+    const latestWorkspaceState = latestWorkspaceStateByWindowId.get(mainContentsId)
+    if (latestWorkspaceState?.scopeKey && latestWorkspaceState?.projectId) {
+      persistLastClosedWorkspaceState(latestWorkspaceState.scopeKey, {
+        projectId: latestWorkspaceState.projectId,
+        closedAt: Date.now(),
+        snapshot: latestWorkspaceState.snapshot,
+      })
     }
-    pendingSplashWindows.delete(mainContentsId)
+    latestWorkspaceStateByWindowId.delete(mainContentsId)
+    mainWindows.delete(mainWindow)
+    resolvePendingSplash(null, mainContentsId, { showWindow: false })
   })
   loadWindow(mainWindow, buildRendererUrl()).catch((error) => {
     logDesktop(`Main window load error: ${error.message}`)
-    const pendingSplash = pendingSplashWindows.get(mainContentsId)
-    if (pendingSplash && !pendingSplash.isDestroyed()) {
-      pendingSplash.destroy()
-    }
-    pendingSplashWindows.delete(mainContentsId)
+    resolvePendingSplash(mainWindow, mainContentsId, { showWindow: true })
     mainWindow.loadURL(`data:text/plain,${encodeURIComponent(error.message)}`).catch(() => {})
   })
   return mainWindow
@@ -1106,16 +1243,8 @@ ipcMain.handle('desktop:open-window', (_event, options) => openPanelWindow(optio
 ipcMain.handle('desktop:open-main-window', () => launchDetachedMainProcess())
 ipcMain.on('desktop:renderer-ready', (event) => {
   const contentsId = event.sender.id
-  const splashWindow = pendingSplashWindows.get(contentsId)
   const window = BrowserWindow.fromWebContents(event.sender)
-  if (window && !window.isDestroyed() && !window.isVisible()) {
-    window.show()
-    window.focus()
-  }
-  if (splashWindow && !splashWindow.isDestroyed()) {
-    splashWindow.destroy()
-  }
-  pendingSplashWindows.delete(contentsId)
+  resolvePendingSplash(window, contentsId, { showWindow: true })
 })
 ipcMain.handle('desktop:close-window', (event) => {
   getEventWindow(event)?.close()
@@ -1138,6 +1267,26 @@ ipcMain.handle('desktop:toggle-maximize-window', (event) => {
 ipcMain.handle('desktop:get-window-state', (event) => {
   const window = getEventWindow(event)
   return { maximized: Boolean(window?.isMaximized()) }
+})
+ipcMain.handle('desktop:get-persisted-workspace-state', (_event, scopeKey) => getPersistedWorkspaceState(scopeKey))
+ipcMain.handle('desktop:update-workspace-state', (event, payload) => {
+  const scopeKey = String(payload?.scopeKey || '').trim()
+  const projectId = String(payload?.projectId || '').trim()
+  if (!scopeKey) {
+    latestWorkspaceStateByWindowId.delete(event.sender.id)
+    return { ok: false }
+  }
+  if (!projectId) {
+    latestWorkspaceStateByWindowId.delete(event.sender.id)
+    clearPersistedWorkspaceState(scopeKey)
+    return { ok: true }
+  }
+  latestWorkspaceStateByWindowId.set(event.sender.id, {
+    scopeKey,
+    projectId,
+    snapshot: normalizeWorkspaceSnapshot(payload?.snapshot),
+  })
+  return { ok: true }
 })
 ipcMain.handle('desktop:get-server-state', async () => {
   await refreshAndBroadcastDesktopServerState()

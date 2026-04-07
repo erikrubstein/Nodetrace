@@ -2933,11 +2933,37 @@ button:disabled {
   background: var(--border);
 }
 
-.project-picker__loading-placeholder {
-  min-height: 72px;
-  border-radius: 6px;
+.project-picker__loading-state {
+  min-height: 84px;
+  display: grid;
+  align-content: start;
+  padding-top: 10px;
+}
+
+.project-picker__loading-bar {
+  width: min(260px, 100%);
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
   background: color-mix(in srgb, var(--panel-elevated) 72%, transparent);
-  opacity: 0.55;
+}
+
+.project-picker__loading-bar span {
+  display: block;
+  width: 36%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-primary);
+  animation: project-picker-loading 1s ease-in-out infinite;
+}
+
+@keyframes project-picker-loading {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
 }
 
 .project-picker__state-stack {

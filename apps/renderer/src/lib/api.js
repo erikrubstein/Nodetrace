@@ -8,6 +8,8 @@ export class ApiError extends Error {
 }
 
 let runtimeApiBaseUrl = ''
+let desktopConnectionCooldownUntil = 0
+const DESKTOP_CONNECTION_COOLDOWN_MS = 2500
 
 function isAbsoluteUrl(value) {
   return /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(String(value || ''))
@@ -35,8 +37,37 @@ function normalizeApiErrorMessage(message) {
   return value
 }
 
+function isDesktopConnectionErrorMessage(message) {
+  const value = String(message || '').trim()
+  return value === 'Unable to reach the selected server profile.' || value === 'Choose a connected server profile.'
+}
+
+function shouldShortCircuitDesktopRequest(url) {
+  const normalizedUrl = String(url || '').trim()
+  return (
+    Boolean(runtimeApiBaseUrl) &&
+    Boolean(normalizedUrl) &&
+    !isAbsoluteUrl(normalizedUrl) &&
+    Date.now() < desktopConnectionCooldownUntil
+  )
+}
+
+function noteDesktopConnectionFailure(message) {
+  if (isDesktopConnectionErrorMessage(message)) {
+    desktopConnectionCooldownUntil = Date.now() + DESKTOP_CONNECTION_COOLDOWN_MS
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('nodetrace:desktop-connection-error', {
+          detail: { message },
+        }),
+      )
+    }
+  }
+}
+
 export function configureApiBaseUrl(baseUrl) {
   runtimeApiBaseUrl = normalizeBaseUrl(baseUrl)
+  desktopConnectionCooldownUntil = 0
 }
 
 export function resolveApiUrl(url) {
@@ -51,13 +82,26 @@ export function resolveApiUrl(url) {
 }
 
 export async function api(url, options = {}) {
-  const response = await fetch(resolveApiUrl(url), {
-    credentials: 'same-origin',
-    ...options,
-  })
+  if (shouldShortCircuitDesktopRequest(url)) {
+    throw new ApiError('Unable to reach the selected server profile.', 502)
+  }
+
+  let response
+  try {
+    response = await fetch(resolveApiUrl(url), {
+      credentials: 'same-origin',
+      ...options,
+    })
+  } catch (error) {
+    const message = normalizeApiErrorMessage(error?.message || 'Network request failed')
+    noteDesktopConnectionFailure(message)
+    throw new ApiError(message, 0)
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
-    throw new ApiError(normalizeApiErrorMessage(payload.error || 'Request failed'), response.status, payload)
+    const message = normalizeApiErrorMessage(payload.error || 'Request failed')
+    noteDesktopConnectionFailure(message)
+    throw new ApiError(message, response.status, payload)
   }
 
   if (response.status === 204) {
@@ -69,6 +113,11 @@ export async function api(url, options = {}) {
 
 export function uploadWithProgress(url, formData, onProgress) {
   return new Promise((resolve, reject) => {
+    if (shouldShortCircuitDesktopRequest(url)) {
+      reject(new ApiError('Unable to reach the selected server profile.', 502))
+      return
+    }
+
     const request = new XMLHttpRequest()
     request.open('POST', resolveApiUrl(url))
     request.responseType = 'json'
@@ -88,9 +137,12 @@ export function uploadWithProgress(url, formData, onProgress) {
         return
       }
 
+      const message = normalizeApiErrorMessage(request.response?.error || 'Request failed')
+      noteDesktopConnectionFailure(message)
+
       reject(
         new ApiError(
-          normalizeApiErrorMessage(request.response?.error || 'Request failed'),
+          message,
           request.status,
           request.response,
         ),
@@ -98,7 +150,9 @@ export function uploadWithProgress(url, formData, onProgress) {
     }
 
     request.onerror = () => {
-      reject(new ApiError('Network request failed', 0))
+      const message = normalizeApiErrorMessage('Network request failed')
+      noteDesktopConnectionFailure(message)
+      reject(new ApiError(message, 0))
     }
 
     request.send(formData)

@@ -60,6 +60,22 @@ export function subscribeDesktopWindowState(callback) {
   return window.nodetraceDesktop?.onWindowStateChange?.(callback) || (() => {})
 }
 
+export function getPersistedDesktopWorkspaceState(scopeKey) {
+  return (
+    window.nodetraceDesktop?.getPersistedWorkspaceState?.(scopeKey).catch((error) => {
+      throw normalizeDesktopError(error)
+    }) || Promise.resolve(null)
+  )
+}
+
+export function updateDesktopWorkspaceState(payload) {
+  return (
+    window.nodetraceDesktop?.updateWorkspaceState?.(payload).catch((error) => {
+      throw normalizeDesktopError(error)
+    }) || Promise.resolve({ ok: false })
+  )
+}
+
 export function getDesktopServerState() {
   return (
     window.nodetraceDesktop?.getServerState?.().catch((error) => {

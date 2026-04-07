@@ -14,6 +14,10 @@ export default function useProjectSync({
   clearHistory,
   currentUser,
   desktopEnvironment = false,
+  desktopConnectionStatus = null,
+  getPreferredProjectId,
+  projectBootstrapReady = true,
+  requireManualProjectSelection = false,
   onAuthLost,
   pendingLocalEventsRef,
   selectedNode,
@@ -33,6 +37,7 @@ export default function useProjectSync({
   const loadingProjectsRequestSequenceRef = useRef(0)
   const treeRequestSequenceRef = useRef(0)
   const currentUserId = currentUser?.id || null
+  const desktopProfileConnected = !desktopEnvironment || desktopConnectionStatus === 'connected'
   function buildProjectsSignature(projectList) {
     return JSON.stringify(
       (projectList || []).map((project) => ({
@@ -74,10 +79,18 @@ export default function useProjectSync({
           return projectList
         }
 
-        const nextId =
+        const hasPreferredProjectId =
           preferredProjectId && projectList.some((project) => project.id === preferredProjectId)
-            ? preferredProjectId
-            : projectList[0].id
+        if (requireManualProjectSelection && !hasPreferredProjectId) {
+          updateUrlState(null, null, getUrlState().transform)
+          setSelectedProjectId(null)
+          setTree(null)
+          setSelectedNodeId(null)
+          setStatus('Select a project to continue.')
+          return projectList
+        }
+
+        const nextId = hasPreferredProjectId ? preferredProjectId : projectList[0].id
 
         debugLog('loadProjects selected project', {
           preferredProjectId,
@@ -93,7 +106,7 @@ export default function useProjectSync({
         }
       }
     },
-    [setProjectListLoading, setProjects, setSelectedNodeId, setSelectedProjectId, setStatus, setTree],
+    [requireManualProjectSelection, setProjectListLoading, setProjects, setSelectedNodeId, setSelectedProjectId, setStatus, setTree],
   )
 
   const loadTree = useCallback(
@@ -127,6 +140,13 @@ export default function useProjectSync({
 
   useEffect(() => {
     async function initialize() {
+      if (!projectBootstrapReady) {
+        return
+      }
+      if (!desktopProfileConnected) {
+        setProjectListLoading?.(false)
+        return
+      }
       if (!currentUserId) {
         setProjectListLoading?.(false)
         setProjects([])
@@ -137,7 +157,8 @@ export default function useProjectSync({
       }
 
       try {
-        await loadProjects(getUrlState().projectId)
+        const preferredProjectId = requireManualProjectSelection ? null : getUrlState().projectId || getPreferredProjectId?.() || null
+        await loadProjects(preferredProjectId)
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
           onAuthLost?.()
@@ -151,10 +172,10 @@ export default function useProjectSync({
     }
 
     void initialize()
-  }, [currentUserId, loadProjects, onAuthLost, setError, setProjectListLoading, setProjects, setSelectedNodeId, setSelectedProjectId, setStatus, setTree])
+  }, [currentUserId, desktopProfileConnected, getPreferredProjectId, loadProjects, onAuthLost, projectBootstrapReady, requireManualProjectSelection, setError, setProjectListLoading, setProjects, setSelectedNodeId, setSelectedProjectId, setStatus, setTree])
 
   useEffect(() => {
-    if (!currentUserId) {
+    if (!currentUserId || !desktopProfileConnected) {
       return undefined
     }
 
@@ -162,7 +183,8 @@ export default function useProjectSync({
 
     async function refreshProjects() {
       try {
-        await loadProjects(selectedProjectId || getUrlState().projectId, { silent: true })
+        const preferredProjectId = requireManualProjectSelection ? null : selectedProjectId || getUrlState().projectId
+        await loadProjects(preferredProjectId, { silent: true })
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
           onAuthLost?.()
@@ -194,14 +216,14 @@ export default function useProjectSync({
       window.removeEventListener('focus', refreshProjects)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [currentUserId, desktopEnvironment, loadProjects, onAuthLost, selectedProjectId, setError])
+  }, [currentUserId, desktopEnvironment, desktopProfileConnected, loadProjects, onAuthLost, requireManualProjectSelection, selectedProjectId, setError])
 
   useEffect(() => {
     clearHistory()
   }, [clearHistory, selectedProjectId])
 
   useEffect(() => {
-    if (!currentUserId || !selectedProjectId) {
+    if (!currentUserId || !selectedProjectId || !desktopProfileConnected) {
       return
     }
 
@@ -217,10 +239,10 @@ export default function useProjectSync({
         setError(loadError.message)
       }
     })
-  }, [currentUserId, loadTree, onAuthLost, selectedProjectId, setError])
+  }, [currentUserId, desktopProfileConnected, loadTree, onAuthLost, selectedProjectId, setError])
 
   useEffect(() => {
-    if (!captureSessionId || !selectedProjectId || !selectedNode?.id || treeProjectId !== selectedProjectId) {
+    if (!captureSessionId || !selectedProjectId || !selectedNode?.id || treeProjectId !== selectedProjectId || !desktopProfileConnected) {
       return undefined
     }
 
@@ -257,10 +279,10 @@ export default function useProjectSync({
       cancelled = true
       window.clearInterval(heartbeat)
     }
-  }, [captureSessionId, onAuthLost, selectedNode?.id, selectedProjectId, setError, setMobileConnectionCount, treeProjectId])
+  }, [captureSessionId, desktopProfileConnected, onAuthLost, selectedNode?.id, selectedProjectId, setError, setMobileConnectionCount, treeProjectId])
 
   useEffect(() => {
-    if (!captureSessionId || !selectedProjectId) {
+    if (!captureSessionId || !selectedProjectId || !desktopProfileConnected) {
       setMobileConnectionCount(0)
       return undefined
     }
@@ -299,10 +321,10 @@ export default function useProjectSync({
       cancelled = true
       window.clearInterval(handle)
     }
-  }, [captureSessionId, desktopEnvironment, onAuthLost, selectedProjectId, setMobileConnectionCount])
+  }, [captureSessionId, desktopEnvironment, desktopProfileConnected, onAuthLost, selectedProjectId, setMobileConnectionCount])
 
   useEffect(() => {
-    if (!currentUserId || selectedProjectId == null) {
+    if (!currentUserId || selectedProjectId == null || !desktopProfileConnected) {
       return undefined
     }
 
@@ -361,7 +383,7 @@ export default function useProjectSync({
     return () => {
       stream.close()
     }
-  }, [currentUserId, loadProjects, loadTree, onAuthLost, pendingLocalEventsRef, selectedNodeIdRef, selectedProjectId, setError])
+  }, [currentUserId, desktopProfileConnected, loadProjects, loadTree, onAuthLost, pendingLocalEventsRef, selectedNodeIdRef, selectedProjectId, setError])
 
   return {
     loadProjects,

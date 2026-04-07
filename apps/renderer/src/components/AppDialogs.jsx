@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import ConfirmDialog from './ConfirmDialog'
 import IconButton from './IconButton'
 import { GearIcon, GlobeIcon, PlusIcon, UsersIcon, WarningIcon } from './icons'
@@ -12,6 +12,7 @@ export default function AppDialogs({
   accountStatus,
   applyTemplateConfirmation,
   busy,
+  canCloseProjectDialog = false,
   bulkTemplateCount,
   changePassword,
   changeUsername,
@@ -97,17 +98,6 @@ export default function AppDialogs({
 }) {
   const [openProjectFilter, setOpenProjectFilter] = useState(null)
   const [connectedAccountFilter, setConnectedAccountFilter] = useState(false)
-  const [showProjectLoadingNotice, setShowProjectLoadingNotice] = useState(false)
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => {
-      setShowProjectLoadingNotice(desktopProjectPickerLoading)
-    }, desktopProjectPickerLoading ? 140 : 0)
-
-    return () => {
-      window.clearTimeout(handle)
-    }
-  }, [desktopProjectPickerLoading])
 
   const openProjectSource = desktopEnvironment ? desktopProjectPickerProjects : projects
   const selectedDesktopServerProfile = useMemo(
@@ -121,8 +111,8 @@ export default function AppDialogs({
   const suppressOpenProjectError =
     showProjectDialog === 'open' &&
     desktopEnvironment &&
-    selectedDesktopServerProfile?.connectionStatus !== 'connected' &&
-    /^Desktop proxy request failed/i.test(String(error || ''))
+    (/^Desktop proxy request failed/i.test(String(error || '')) ||
+      /^Unable to reach the selected server profile\./i.test(String(error || '')))
   const sortedProjects = useMemo(
     () =>
       [...openProjectSource].sort((left, right) =>
@@ -167,8 +157,6 @@ export default function AppDialogs({
   const selectedImportProject =
     importableProjects.find((project) => project.id === importTemplateDialog?.sourceProjectId) || null
   const importableTemplates = selectedImportProject?.identificationTemplates || []
-
-  const canCloseOpenProjectDialog = Boolean(tree?.project?.id)
 
   function toggleOpenProjectFilter(filterKey) {
     setOpenProjectFilter((current) => (current === filterKey ? null : filterKey))
@@ -535,7 +523,7 @@ export default function AppDialogs({
         <div
           className="dialog-backdrop"
           onClick={() => {
-            if (!canCloseOpenProjectDialog) {
+            if (!canCloseProjectDialog) {
               return
             }
             setShowProjectDialog(null)
@@ -683,10 +671,12 @@ export default function AppDialogs({
                         </button>
                       </div>
                     </div>
-                  ) : desktopProjectPickerLoading && showProjectLoadingNotice ? (
-                    <div className="inspector__notice">Loading projects...</div>
                   ) : desktopProjectPickerLoading ? (
-                    <div className="project-picker__loading-placeholder" aria-hidden="true" />
+                    <div className="project-picker__loading-state" aria-live="polite">
+                      <div className="project-picker__loading-bar" aria-hidden="true">
+                        <span />
+                      </div>
+                    </div>
                   ) : visibleProjects.length ? (
                     <div className="project-list project-list--fill">
                       {visibleProjects.map((project) => {
@@ -743,7 +733,7 @@ export default function AppDialogs({
                         : 'No projects available on this server profile yet.'}
                     </div>
                   )}
-                  {canCloseOpenProjectDialog ? (
+                  {canCloseProjectDialog ? (
                     <div className="project-picker__card-actions">
                       <button
                         className="ghost-button"

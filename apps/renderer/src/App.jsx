@@ -35,6 +35,7 @@ import {
   deleteDesktopProfileAccount,
   deleteDesktopServerProfile,
   getDesktopServerState,
+  getPersistedDesktopWorkspaceState,
   listDesktopProjectsForProfile,
   getDesktopWindowState,
   isDesktopEnvironment,
@@ -45,6 +46,7 @@ import {
   subscribeDesktopServerState,
   subscribeDesktopWindowState,
   toggleMaximizeDesktopWindow,
+  updateDesktopWorkspaceState,
   updateDesktopServerProfile,
 } from './lib/desktop'
 import { blobFromUrl, createPreviewFile } from './lib/image'
@@ -79,6 +81,8 @@ const PRESENCE_COLORS = ['#6f9cff', '#5fc9a8', '#d48cff', '#f0a35b', '#58c5d8', 
 const DESKTOP_SELECTION_SYNC_CHANNEL = 'nodetrace-desktop-selection'
 const DESKTOP_PANEL_SYNC_CHANNEL = 'nodetrace-desktop-panels'
 const CLIENT_THEME_STORAGE_KEY = 'nodetrace-client-theme'
+const CLIENT_PROJECT_UI_STORAGE_KEY = 'nodetrace-client-project-ui'
+const CLIENT_LAST_PROJECT_STORAGE_KEY = 'nodetrace-client-last-project'
 const DESKTOP_CONNECTION_ERROR_MESSAGE = 'Unable to reach the selected server profile.'
 
 function getStoredClientTheme() {
@@ -88,6 +92,157 @@ function getStoredClientTheme() {
 
   const storedTheme = window.localStorage.getItem(CLIENT_THEME_STORAGE_KEY)
   return storedTheme === 'light' ? 'light' : storedTheme === 'dark' ? 'dark' : defaultUserProjectUi.theme
+}
+
+function normalizeClientProjectUi(value) {
+  const source = value && typeof value === 'object' ? value : {}
+  const panelDock = { ...defaultUserProjectUi.panelDock }
+  for (const panelId of panelIds) {
+    const requestedSide = source.panelDock?.[panelId]
+    if (requestedSide === 'left' || requestedSide === 'right') {
+      panelDock[panelId] = requestedSide
+    }
+  }
+
+  const canvasTransform =
+    source.canvasTransform &&
+    typeof source.canvasTransform === 'object' &&
+    Number.isFinite(Number(source.canvasTransform.x)) &&
+    Number.isFinite(Number(source.canvasTransform.y)) &&
+    Number.isFinite(Number(source.canvasTransform.scale))
+      ? {
+          x: Number(source.canvasTransform.x),
+          y: Number(source.canvasTransform.y),
+          scale: Number(source.canvasTransform.scale),
+        }
+      : null
+
+  return {
+    showGrid: source.showGrid == null ? defaultUserProjectUi.showGrid : Boolean(source.showGrid),
+    canvasTransform,
+    selectedNodeIds: Array.isArray(source.selectedNodeIds) ? source.selectedNodeIds.filter(Boolean) : [],
+    leftSidebarOpen: source.leftSidebarOpen == null ? defaultUserProjectUi.leftSidebarOpen : Boolean(source.leftSidebarOpen),
+    rightSidebarOpen:
+      source.rightSidebarOpen == null ? defaultUserProjectUi.rightSidebarOpen : Boolean(source.rightSidebarOpen),
+    leftSidebarWidth: Math.max(
+      220,
+      Math.min(720, Number(source.leftSidebarWidth) || defaultUserProjectUi.leftSidebarWidth),
+    ),
+    rightSidebarWidth: Math.max(
+      220,
+      Math.min(720, Number(source.rightSidebarWidth) || defaultUserProjectUi.rightSidebarWidth),
+    ),
+    leftActivePanel: panelIds.includes(source.leftActivePanel) ? source.leftActivePanel : defaultUserProjectUi.leftActivePanel,
+    rightActivePanel: panelIds.includes(source.rightActivePanel)
+      ? source.rightActivePanel
+      : defaultUserProjectUi.rightActivePanel,
+    panelDock,
+  }
+}
+
+function buildClientProjectUiScopeKey({ desktopEnvironment = false, currentUserId = '', currentUsername = '', serverBaseUrl = '' }) {
+  const userPart = String(currentUserId || currentUsername || 'anonymous').trim().toLowerCase()
+  const scopeTarget =
+    desktopEnvironment
+      ? String(serverBaseUrl || 'desktop').trim().toLowerCase()
+      : String(window.location.origin || 'web').trim().toLowerCase()
+  return `${desktopEnvironment ? 'desktop' : 'web'}::${scopeTarget}::${userPart}`
+}
+
+function getClientProjectUiStorageKey(scopeKey, projectId) {
+  return `${CLIENT_PROJECT_UI_STORAGE_KEY}::${scopeKey}::${String(projectId || '').trim()}`
+}
+
+function getClientLastProjectStorageKey(scopeKey) {
+  return `${CLIENT_LAST_PROJECT_STORAGE_KEY}::${scopeKey}`
+}
+
+function readStoredLastProjectEntry(scopeKey) {
+  if (typeof window === 'undefined' || !scopeKey) {
+    return null
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(getClientLastProjectStorageKey(scopeKey))
+    if (!rawValue) {
+      return null
+    }
+
+    const parsedValue = JSON.parse(rawValue)
+    if (parsedValue && typeof parsedValue === 'object') {
+      const projectId = String(parsedValue.projectId || '').trim()
+      const closedAt = Number(parsedValue.closedAt || 0)
+      if (!projectId) {
+        return null
+      }
+      return {
+        projectId,
+        closedAt: Number.isFinite(closedAt) ? closedAt : 0,
+      }
+    }
+  } catch {
+    const legacyValue = String(window.localStorage.getItem(getClientLastProjectStorageKey(scopeKey)) || '').trim()
+    if (legacyValue) {
+      return { projectId: legacyValue, closedAt: 0 }
+    }
+  }
+
+  return null
+}
+
+function readStoredClientProjectUi(scopeKey, projectId) {
+  if (typeof window === 'undefined' || !scopeKey || !projectId) {
+    return null
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(getClientProjectUiStorageKey(scopeKey, projectId))
+    if (!rawValue) {
+      return null
+    }
+    return normalizeClientProjectUi(JSON.parse(rawValue))
+  } catch {
+    return null
+  }
+}
+
+function writeStoredClientProjectUi(scopeKey, projectId, snapshot) {
+  if (typeof window === 'undefined' || !scopeKey || !projectId) {
+    return
+  }
+  window.localStorage.setItem(
+    getClientProjectUiStorageKey(scopeKey, projectId),
+    JSON.stringify(normalizeClientProjectUi(snapshot)),
+  )
+}
+
+function readStoredLastProjectId(scopeKey) {
+  return readStoredLastProjectEntry(scopeKey)?.projectId || null
+}
+
+function writeStoredLastProjectId(scopeKey, projectId, closedAt = Date.now()) {
+  if (typeof window === 'undefined' || !scopeKey) {
+    return
+  }
+  const normalizedProjectId = String(projectId || '').trim()
+  if (!normalizedProjectId) {
+    window.localStorage.removeItem(getClientLastProjectStorageKey(scopeKey))
+    return
+  }
+
+  const nextClosedAt = Number.isFinite(Number(closedAt)) ? Number(closedAt) : Date.now()
+  const currentEntry = readStoredLastProjectEntry(scopeKey)
+  if (currentEntry && Number(currentEntry.closedAt || 0) > nextClosedAt) {
+    return
+  }
+
+  window.localStorage.setItem(
+    getClientLastProjectStorageKey(scopeKey),
+    JSON.stringify({
+      projectId: normalizedProjectId,
+      closedAt: nextClosedAt,
+    }),
+  )
 }
 
 function shouldShowMobileEntryPrompt() {
@@ -125,6 +280,35 @@ function getPresenceInitials(username) {
   return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase()
 }
 
+function buildTemplateFormState(template) {
+  if (!template) {
+    return {
+      name: '',
+      aiInstructions: '',
+      parentDepth: 0,
+      childDepth: 0,
+      fields: [],
+    }
+  }
+
+  return {
+    name: template.name || '',
+    aiInstructions: template.aiInstructions || '',
+    parentDepth: Number(template.parentDepth || 0),
+    childDepth: Number(template.childDepth || 0),
+    fields:
+      template.fields?.map((field) => ({
+        id: `${template.id}-${field.key}`,
+        key: field.key,
+        label: field.label,
+        type: field.type,
+        mode: field.mode || 'manual',
+        parentDepth: Number(field.parentDepth || 0),
+        childDepth: Number(field.childDepth || 0),
+      })) || [],
+  }
+}
+
 function MainApp() {
   const { panelWindowId } = getUrlState()
   const desktopEnvironment = isDesktopEnvironment()
@@ -148,6 +332,7 @@ function MainApp() {
   const [projectPickerProjects, setProjectPickerProjects] = useState([])
   const [projectPickerLoading, setProjectPickerLoading] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState(null)
+  const [manualProjectSelectionRequired, setManualProjectSelectionRequired] = useState(false)
   const [pendingProjectTransitionId, setPendingProjectTransitionId] = useState(null)
   const [tree, setTree] = useState(null)
   const [selectedNodeId, setSelectedNodeId] = useState(null)
@@ -157,6 +342,9 @@ function MainApp() {
   const [status, setStatus] = useState('Loading projects...')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [desktopPersistedWorkspaceState, setDesktopPersistedWorkspaceState] = useState(null)
+  const [desktopPersistedWorkspaceReady, setDesktopPersistedWorkspaceReady] = useState(false)
+  const [desktopConnectionFaulted, setDesktopConnectionFaulted] = useState(false)
   const [desktopWindowMaximized, setDesktopWindowMaximized] = useState(false)
   const [poppedOutPanelIds, setPoppedOutPanelIds] = useState([])
   const [openMenu, setOpenMenu] = useState(null)
@@ -239,26 +427,47 @@ function MainApp() {
   const pendingInitialCanvasFitRef = useRef(false)
   const treeRef = useRef(null)
   const previousDesktopConnectionStatusRef = useRef(null)
+  const desktopReconnectStatusRef = useRef(null)
   const initializedAuthProfileIdRef = useRef(null)
   const currentUserRef = useRef(null)
   const selectedProjectIdRef = useRef(null)
   const selectedNodeIdRef = useRef(null)
+  const sessionProjectUiByProjectIdRef = useRef(new Map())
+  const loadedImagesRef = useRef({})
   const nodeImageEditSequenceRef = useRef(new Map())
   const loadedUiSignatureRef = useRef('')
   const pendingUiSignatureRef = useRef(null)
-  const uiRequestSequenceRef = useRef(0)
   const selectedLayoutAnchorRef = useRef({ nodeId: null, x: null, y: null })
   const pendingFocusNodeIdRef = useRef(null)
   const presenceRequestSequenceRef = useRef(0)
+  const projectPresenceSignatureRef = useRef('[]')
   const webAuthBootstrapCompleteRef = useRef(false)
   const projectPickerRequestSequenceRef = useRef(0)
   const { clearHistory, historyState, pushHistory, undo, redo } = useUndoRedo({ busy, setBusy, setError })
+  const setTemplateFormIfChanged = useCallback((nextValue) => {
+    setTemplateForm((current) => {
+      const resolvedNextValue = typeof nextValue === 'function' ? nextValue(current) : nextValue
+      return JSON.stringify(current) === JSON.stringify(resolvedNextValue) ? current : resolvedNextValue
+    })
+  }, [])
   const applyTreePayload = useCallback((payload) => {
     setTree(normalizeServerTree(payload))
   }, [])
   const selectedDesktopServerProfile = useMemo(
     () => desktopServerState.profiles.find((profile) => profile.id === desktopServerState.selectedProfileId) || null,
     [desktopServerState.profiles, desktopServerState.selectedProfileId],
+  )
+  const clientProjectUiScopeKey = useMemo(
+    () =>
+      currentUser
+        ? buildClientProjectUiScopeKey({
+            desktopEnvironment,
+            currentUserId: currentUser.id || '',
+            currentUsername: currentUser.username || '',
+            serverBaseUrl: selectedDesktopServerProfile?.baseUrl || '',
+          })
+        : '',
+    [currentUser, desktopEnvironment, selectedDesktopServerProfile?.baseUrl],
   )
   const selectedProjectSummary = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || null,
@@ -286,14 +495,13 @@ function MainApp() {
   }, [desktopAccountManagerFocusId, desktopEnvironment, desktopServerState.profiles, selectedDesktopServerProfile])
   const selectedDesktopServerProfileId = selectedDesktopServerProfile?.id || null
   const selectedDesktopServerConnectionStatus = selectedDesktopServerProfile?.connectionStatus || null
+  const effectiveDesktopServerConnectionStatus =
+    desktopEnvironment && desktopConnectionFaulted && selectedDesktopServerConnectionStatus !== 'connected'
+      ? selectedDesktopServerConnectionStatus === 'invalid_login'
+        ? 'invalid_login'
+        : 'disconnected'
+      : selectedDesktopServerConnectionStatus
   const desktopServerSelectionRequired = desktopEnvironment && desktopServerReady && !selectedDesktopServerProfile
-  const desktopConnectedAccountRequired =
-    desktopEnvironment &&
-    desktopServerReady &&
-    (!selectedDesktopServerProfile ||
-      (selectedDesktopServerConnectionStatus !== 'connected' &&
-        showProjectDialog !== 'open' &&
-        !serverDisconnectDialogOpen))
   const refreshDesktopServerState = useCallback(async () => {
     if (!desktopEnvironment) {
       return null
@@ -303,6 +511,35 @@ function MainApp() {
     configureApiBaseUrl(nextState.proxyBaseUrl || '')
     return nextState
   }, [desktopEnvironment])
+
+  const clearRememberedProjectSelection = useCallback(() => {
+    if (!clientProjectUiScopeKey) {
+      return
+    }
+    if (desktopEnvironment) {
+      setDesktopPersistedWorkspaceState(null)
+      void updateDesktopWorkspaceState({
+        scopeKey: clientProjectUiScopeKey,
+        projectId: null,
+        snapshot: null,
+      }).catch(() => {})
+      return
+    }
+    writeStoredLastProjectId(clientProjectUiScopeKey, null)
+  }, [clientProjectUiScopeKey, desktopEnvironment])
+
+  const closeDisconnectedProject = useCallback(() => {
+    setPendingProjectTransitionId(null)
+    setProjectListLoading(false)
+    setSelectedProjectId(null)
+    setTree(null)
+    setSelectedNodeId(null)
+    setProjectUiReady(false)
+    setMobileConnectionCount(0)
+    setManualProjectSelectionRequired(true)
+    updateUrlState(null, null, getUrlState().transform)
+    clearRememberedProjectSelection()
+  }, [clearRememberedProjectSelection])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -335,19 +572,140 @@ function MainApp() {
   }, [currentUser])
 
   useEffect(() => {
+    loadedImagesRef.current = loadedImages
+  }, [loadedImages])
+
+  useEffect(() => {
+    sessionProjectUiByProjectIdRef.current = new Map()
+    pendingUiSignatureRef.current = null
+    loadedUiSignatureRef.current = ''
+  }, [clientProjectUiScopeKey])
+
+  useEffect(() => {
+    if (!desktopEnvironment) {
+      setDesktopPersistedWorkspaceState(null)
+      setDesktopPersistedWorkspaceReady(true)
+      return
+    }
+    if (!currentUser || !clientProjectUiScopeKey) {
+      setDesktopPersistedWorkspaceState(null)
+      setDesktopPersistedWorkspaceReady(false)
+      return
+    }
+
+    let cancelled = false
+    setDesktopPersistedWorkspaceReady(false)
+
+    getPersistedDesktopWorkspaceState(clientProjectUiScopeKey)
+      .then((value) => {
+        if (cancelled) {
+          return
+        }
+        setDesktopPersistedWorkspaceState(value || null)
+        setDesktopPersistedWorkspaceReady(true)
+      })
+      .catch(() => {
+        if (cancelled) {
+          return
+        }
+        setDesktopPersistedWorkspaceState(null)
+        setDesktopPersistedWorkspaceReady(true)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [clientProjectUiScopeKey, currentUser, desktopEnvironment])
+
+  useEffect(() => {
     if (!desktopEnvironment) {
       previousDesktopConnectionStatusRef.current = null
       return
     }
-    const currentStatus = selectedDesktopServerConnectionStatus
+    const currentStatus = effectiveDesktopServerConnectionStatus
     const previousStatus = previousDesktopConnectionStatusRef.current
     const hasOpenProject = Boolean(selectedProjectId && tree?.project)
     const browsingProjectPicker = showProjectDialog === 'open'
-    if (!browsingProjectPicker && previousStatus === 'connected' && currentStatus && currentStatus !== 'connected' && hasOpenProject) {
-      setServerDisconnectDialogOpen(true)
+    if (previousStatus === 'connected' && currentStatus && currentStatus !== 'connected' && hasOpenProject) {
+      closeDisconnectedProject()
+      setStatus('The active server profile disconnected.')
+      if (!browsingProjectPicker) {
+        setShowProjectDialog(null)
+        setServerDisconnectDialogOpen(true)
+      }
     }
     previousDesktopConnectionStatusRef.current = currentStatus
-  }, [desktopEnvironment, selectedDesktopServerConnectionStatus, selectedProjectId, showProjectDialog, tree?.project])
+  }, [closeDisconnectedProject, desktopEnvironment, effectiveDesktopServerConnectionStatus, selectedProjectId, showProjectDialog, tree?.project])
+
+  useEffect(() => {
+    if (!desktopEnvironment) {
+      setDesktopConnectionFaulted(false)
+      return
+    }
+    if (selectedDesktopServerConnectionStatus === 'connected' || !selectedDesktopServerProfileId) {
+      setDesktopConnectionFaulted(false)
+    }
+  }, [desktopEnvironment, selectedDesktopServerConnectionStatus, selectedDesktopServerProfileId])
+
+  useEffect(() => {
+    if (!desktopEnvironment) {
+      return undefined
+    }
+
+    const handleDesktopConnectionError = () => {
+      setDesktopConnectionFaulted(true)
+      setError('')
+      if (desktopServerDialogOpen || showProjectDialog === 'open') {
+        if (selectedProjectId && tree?.project) {
+          closeDisconnectedProject()
+          setStatus('The active server profile disconnected.')
+        }
+        setProjectListLoading(false)
+        return
+      }
+
+      if (selectedProjectId && tree?.project) {
+        closeDisconnectedProject()
+        setShowProjectDialog(null)
+        setServerDisconnectDialogOpen(true)
+        setStatus('The active server profile disconnected.')
+        return
+      }
+
+      setProjectListLoading(false)
+      setStatus('The selected server profile is disconnected.')
+      setShowProjectDialog('open')
+    }
+
+    window.addEventListener('nodetrace:desktop-connection-error', handleDesktopConnectionError)
+    return () => {
+      window.removeEventListener('nodetrace:desktop-connection-error', handleDesktopConnectionError)
+    }
+  }, [closeDisconnectedProject, desktopEnvironment, desktopServerDialogOpen, selectedProjectId, showProjectDialog, tree?.project])
+
+  useEffect(() => {
+    if (
+      !desktopEnvironment ||
+      !authReady ||
+      desktopServerSelectionRequired ||
+      desktopServerDialogOpen ||
+      serverDisconnectDialogOpen ||
+      currentUser ||
+      !desktopServerState.profiles.length
+    ) {
+      return
+    }
+
+    setShowProjectDialog((current) => current || 'open')
+  }, [
+    authReady,
+    currentUser,
+    desktopEnvironment,
+    desktopServerDialogOpen,
+    desktopServerSelectionRequired,
+    desktopServerState.profiles.length,
+    serverDisconnectDialogOpen,
+  ])
 
   useEffect(() => {
     if (!desktopEnvironment) {
@@ -416,6 +774,7 @@ function MainApp() {
     }
 
     const requestSequence = ++projectPickerRequestSequenceRef.current
+    setProjectPickerProjects([])
     setProjectPickerLoading(true)
     listDesktopProjectsForProfile(projectPickerProfileId)
       .then((projectList) => {
@@ -751,6 +1110,33 @@ function MainApp() {
         ),
       ).sort((left, right) => left.localeCompare(right)),
     [tree?.nodes],
+  )
+  const buildCurrentProjectUiSnapshot = useCallback(
+    () =>
+      normalizeClientProjectUi({
+        showGrid,
+        canvasTransform: transform,
+        selectedNodeIds: effectiveSelectedNodeIds,
+        leftSidebarOpen,
+        rightSidebarOpen,
+        leftSidebarWidth,
+        rightSidebarWidth,
+        leftActivePanel: resolvedLeftActivePanel,
+        rightActivePanel: resolvedRightActivePanel,
+        panelDock,
+      }),
+    [
+      effectiveSelectedNodeIds,
+      leftSidebarOpen,
+      leftSidebarWidth,
+      panelDock,
+      resolvedLeftActivePanel,
+      resolvedRightActivePanel,
+      rightSidebarOpen,
+      rightSidebarWidth,
+      showGrid,
+      transform,
+    ],
   )
   const setEffectiveSelection = useCallback((nodeIds, preferredPrimaryId = null) => {
     const validIds = Array.from(new Set((nodeIds || []).filter(Boolean))).filter(
@@ -1190,24 +1576,23 @@ function MainApp() {
       return
     }
 
-    const nextUi = {
-      showGrid: projectUi.showGrid,
-      canvasTransform: projectUi.canvasTransform,
-      selectedNodeIds: projectUi.selectedNodeIds,
-      leftSidebarOpen: projectUi.leftSidebarOpen,
-      rightSidebarOpen: projectUi.rightSidebarOpen,
-      leftSidebarWidth: projectUi.leftSidebarWidth,
-      rightSidebarWidth: projectUi.rightSidebarWidth,
-      leftActivePanel: projectUi.leftActivePanel,
-      rightActivePanel: projectUi.rightActivePanel,
-      panelDock: projectUi.panelDock,
-    }
+    const nextUi = normalizeClientProjectUi(
+      sessionProjectUiByProjectIdRef.current.get(selectedProjectId) ||
+        (desktopEnvironment &&
+        desktopPersistedWorkspaceState?.projectId === selectedProjectId &&
+        desktopPersistedWorkspaceState?.snapshot
+          ? desktopPersistedWorkspaceState.snapshot
+          : null) ||
+        readStoredClientProjectUi(clientProjectUiScopeKey, selectedProjectId) ||
+        projectUi,
+    )
     const incomingSignature = JSON.stringify(nextUi)
     if (pendingUiSignatureRef.current && incomingSignature !== pendingUiSignatureRef.current) {
       return
     }
     pendingUiSignatureRef.current = null
     loadedUiSignatureRef.current = incomingSignature
+    sessionProjectUiByProjectIdRef.current.set(selectedProjectId, nextUi)
     if (isPanelWindow) {
       setProjectUiReady(true)
       return
@@ -1229,11 +1614,12 @@ function MainApp() {
     setRightActivePanel(nextUi.rightActivePanel)
     setPanelDock(nextUi.panelDock)
     setProjectUiReady(true)
-  }, [isPanelWindow, projectUi.canvasTransform, projectUi.leftActivePanel, projectUi.leftSidebarOpen, projectUi.leftSidebarWidth, projectUi.panelDock, projectUi.rightActivePanel, projectUi.rightSidebarOpen, projectUi.rightSidebarWidth, projectUi.selectedNodeIds, projectUi.showGrid, selectedProjectId, setEffectiveSelection, tree?.nodes, tree?.project])
+  }, [clientProjectUiScopeKey, desktopEnvironment, desktopPersistedWorkspaceState, isPanelWindow, projectUi, projectUi.canvasTransform, projectUi.leftActivePanel, projectUi.leftSidebarOpen, projectUi.leftSidebarWidth, projectUi.panelDock, projectUi.rightActivePanel, projectUi.rightSidebarOpen, projectUi.rightSidebarWidth, projectUi.selectedNodeIds, projectUi.showGrid, selectedProjectId, setEffectiveSelection, tree?.nodes, tree?.project])
 
   const handleAuthLost = useCallback(() => {
     initializedAuthProfileIdRef.current = null
     setPendingProjectTransitionId(null)
+    setManualProjectSelectionRequired(false)
     setCurrentUser(null)
     setAuthReady(true)
     setProjects([])
@@ -1261,7 +1647,6 @@ function MainApp() {
     if (desktopEnvironment) {
       if (showProjectDialog === 'open') {
         setDesktopServerDialogReturnTarget('open')
-        setShowProjectDialog(null)
       } else {
         setDesktopServerDialogReturnTarget(null)
       }
@@ -1386,24 +1771,39 @@ function MainApp() {
       return
     }
 
-    if (desktopEnvironment && selectedDesktopServerConnectionStatus !== 'connected') {
+    if (desktopEnvironment && effectiveDesktopServerConnectionStatus !== 'connected') {
       if (showProjectDialog === 'open') {
+        if (hasOpenProject) {
+          closeDisconnectedProject()
+        }
+        setError('')
         setProjectListLoading(false)
         setStatus(
-          selectedDesktopServerConnectionStatus === 'invalid_login'
+          effectiveDesktopServerConnectionStatus === 'invalid_login'
             ? 'The selected server profile has invalid login credentials.'
             : 'The selected server profile is disconnected.',
         )
         return
       }
       if (hasOpenProject || serverDisconnectDialogOpen) {
+        closeDisconnectedProject()
+        setShowProjectDialog(null)
         setServerDisconnectDialogOpen(true)
         setStatus('The active server profile disconnected.')
         return
       }
       initializedAuthProfileIdRef.current = null
-      handleAuthLost()
-      setStatus('Select or repair a desktop server profile to continue.')
+      setCurrentUser(null)
+      setAuthReady(true)
+      setProjectListLoading(false)
+      setProjects([])
+      closeDisconnectedProject()
+      setStatus(
+        effectiveDesktopServerConnectionStatus === 'invalid_login'
+          ? 'The selected server profile has invalid login credentials.'
+          : 'The selected server profile is disconnected.',
+      )
+      setShowProjectDialog('open')
       return
     }
 
@@ -1445,11 +1845,12 @@ function MainApp() {
       setAuthReady(true)
     }
   }, [
+    closeDisconnectedProject,
     desktopEnvironment,
     desktopServerReady,
     handleAuthLost,
     selectedProjectId,
-    selectedDesktopServerConnectionStatus,
+    effectiveDesktopServerConnectionStatus,
     selectedDesktopServerProfileId,
     showProjectDialog,
     serverDisconnectDialogOpen,
@@ -1535,14 +1936,31 @@ function MainApp() {
   }
 
   function browseProjectPickerProfile(id) {
+    const normalizedId = String(id || '').trim() || null
+    if (normalizedId === projectPickerProfileId) {
+      return
+    }
     setError('')
-    setProjectPickerProfileId(String(id || '').trim() || null)
+    setProjectPickerProjects([])
+    setProjectPickerLoading(Boolean(normalizedId))
+    setProjectPickerProfileId(normalizedId)
   }
 
   function beginProjectTransition(projectId) {
     const normalizedProjectId = String(projectId || '').trim()
     setPendingProjectTransitionId(normalizedProjectId || null)
   }
+
+  const handleSearchResultsChange = useCallback((nodeIds) => {
+    const nextNodeIds = Array.isArray(nodeIds) ? nodeIds.filter(Boolean) : []
+    setSearchResultsInitialized(true)
+    setSearchResultNodeIds((current) => {
+      if (current.length === nextNodeIds.length && current.every((nodeId, index) => nodeId === nextNodeIds[index])) {
+        return current
+      }
+      return nextNodeIds
+    })
+  }, [])
 
   async function openDesktopProjectFromPicker(profileId, projectId) {
     const normalizedProfileId = String(profileId || '').trim()
@@ -1555,6 +1973,7 @@ function MainApp() {
     setError('')
     beginProjectTransition(normalizedProjectId)
     try {
+      setManualProjectSelectionRequired(false)
       updateUrlState(normalizedProjectId, null, getUrlState().transform)
       if (desktopServerState.selectedProfileId !== normalizedProfileId) {
         const nextState = await selectDesktopServerProfile(normalizedProfileId)
@@ -1576,12 +1995,8 @@ function MainApp() {
 
   function dismissServerDisconnectDialog() {
     setServerDisconnectDialogOpen(false)
-    setPendingProjectTransitionId(null)
-    setSelectedProjectId(null)
-    setSelectedNodeId(null)
-    setTree(null)
+    closeDisconnectedProject()
     setProjects([])
-    setProjectUiReady(false)
     setStatus('Select a project from another server profile.')
     setShowProjectDialog('open')
   }
@@ -1591,6 +2006,13 @@ function MainApp() {
     captureSessionId: currentUser?.captureSessionId || '',
     currentUser,
     desktopEnvironment,
+    desktopConnectionStatus: effectiveDesktopServerConnectionStatus,
+    getPreferredProjectId: () =>
+      desktopEnvironment
+        ? desktopPersistedWorkspaceState?.projectId || null
+        : readStoredLastProjectId(clientProjectUiScopeKey),
+    projectBootstrapReady: desktopEnvironment ? desktopPersistedWorkspaceReady : true,
+    requireManualProjectSelection: manualProjectSelectionRequired,
     onAuthLost: handleAuthLost,
     pendingLocalEventsRef,
     selectedNode,
@@ -1606,6 +2028,87 @@ function MainApp() {
     setStatus,
     setTree,
   })
+
+  useEffect(() => {
+    if (!desktopEnvironment) {
+      desktopReconnectStatusRef.current = null
+      return
+    }
+
+    const currentStatus = effectiveDesktopServerConnectionStatus || null
+    const previousStatus = desktopReconnectStatusRef.current
+    desktopReconnectStatusRef.current = currentStatus
+
+    if (currentStatus !== 'connected' || !previousStatus || previousStatus === 'connected' || !currentUser) {
+      return
+    }
+
+    void loadProjects(manualProjectSelectionRequired ? null : selectedProjectId || getUrlState().projectId || null, {
+      silent: showProjectDialog === 'open',
+    })
+      .then(() => {
+        if (!manualProjectSelectionRequired && selectedProjectId) {
+          return loadTree(selectedProjectId, selectedNodeIdRef.current)
+        }
+        return null
+      })
+      .catch(() => {})
+  }, [
+    currentUser,
+    desktopEnvironment,
+    loadProjects,
+    loadTree,
+    manualProjectSelectionRequired,
+    effectiveDesktopServerConnectionStatus,
+    selectedProjectId,
+    showProjectDialog,
+  ])
+
+  useEffect(() => {
+    if (!desktopEnvironment || isPanelWindow || !currentUser || !clientProjectUiScopeKey || !selectedProjectId || !projectUiReady) {
+      return
+    }
+
+    const snapshot = buildCurrentProjectUiSnapshot()
+    sessionProjectUiByProjectIdRef.current.set(selectedProjectId, snapshot)
+    void updateDesktopWorkspaceState({
+      scopeKey: clientProjectUiScopeKey,
+      projectId: selectedProjectId,
+      snapshot,
+    }).catch(() => {})
+  }, [
+    buildCurrentProjectUiSnapshot,
+    clientProjectUiScopeKey,
+    currentUser,
+    desktopEnvironment,
+    isPanelWindow,
+    projectUiReady,
+    selectedProjectId,
+  ])
+
+  useEffect(() => {
+    if (desktopEnvironment || isPanelWindow || !currentUser || !clientProjectUiScopeKey || !selectedProjectId || !projectUiReady) {
+      return undefined
+    }
+
+    const persistCurrentProjectUi = () => {
+      const closedAt = Date.now()
+      const snapshot = buildCurrentProjectUiSnapshot()
+      writeStoredClientProjectUi(clientProjectUiScopeKey, selectedProjectId, snapshot)
+      writeStoredLastProjectId(clientProjectUiScopeKey, selectedProjectId, closedAt)
+    }
+
+    const handleBeforeUnload = () => {
+      persistCurrentProjectUi()
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('pagehide', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('pagehide', handleBeforeUnload)
+    }
+  }, [buildCurrentProjectUiSnapshot, clientProjectUiScopeKey, currentUser, desktopEnvironment, isPanelWindow, projectUiReady, selectedProjectId])
 
   const resetClientCache = useCallback(async () => {
     setBusy(true)
@@ -1633,24 +2136,25 @@ function MainApp() {
   }, [desktopEnvironment, loadTree, selectedProjectId])
 
   function markImageLoaded(url) {
-    if (!url) {
+    const normalizedUrl = String(url || '').trim()
+    if (!normalizedUrl || loadedImagesRef.current[normalizedUrl]) {
       return
     }
-    setLoadedImages((current) => (current[url] ? current : { ...current, [url]: true }))
+    setLoadedImages((current) => (current[normalizedUrl] ? current : { ...current, [normalizedUrl]: true }))
   }
 
   useEffect(() => {
     if (!authReady) {
       return
     }
-    if (currentUser && !selectedProjectId && !tree) {
+    if (currentUser && !selectedProjectId && !tree && !manualProjectSelectionRequired) {
       return
     }
     if (currentUser && selectedProjectId && !tree) {
       return
     }
     updateUrlState(selectedProjectId, selectedNodeId || getUrlState().nodeId)
-  }, [authReady, currentUser, selectedNodeId, selectedProjectId, tree])
+  }, [authReady, currentUser, manualProjectSelectionRequired, selectedNodeId, selectedProjectId, tree])
 
   useEffect(() => {
     if (!isDesktopEnvironment() || typeof BroadcastChannel === 'undefined') {
@@ -1767,11 +2271,8 @@ function MainApp() {
 
   useEffect(() => {
     if (!identificationTemplates.length) {
-      setSelectedTemplateEditorId(null)
-      setTemplateForm({
-        name: '',
-        fields: [],
-      })
+      setSelectedTemplateEditorId((current) => (current == null ? current : null))
+      setTemplateFormIfChanged(buildTemplateFormState(null))
       return
     }
 
@@ -1780,40 +2281,14 @@ function MainApp() {
       if (hasTemplateChanges) {
         return
       }
-      setTemplateForm({
-        name: currentTemplate.name || '',
-        aiInstructions: currentTemplate.aiInstructions || '',
-        fields:
-          currentTemplate.fields?.map((field) => ({
-            id: `${currentTemplate.id}-${field.key}`,
-            key: field.key,
-            label: field.label,
-            type: field.type,
-            mode: field.mode || 'manual',
-            parentDepth: Number(field.parentDepth || 0),
-            childDepth: Number(field.childDepth || 0),
-          })) || [],
-      })
+      setTemplateFormIfChanged(buildTemplateFormState(currentTemplate))
       return
     }
 
     const firstTemplate = identificationTemplates[0]
-    setSelectedTemplateEditorId(firstTemplate.id)
-    setTemplateForm({
-      name: firstTemplate.name || '',
-      aiInstructions: firstTemplate.aiInstructions || '',
-      fields:
-        firstTemplate.fields?.map((field) => ({
-          id: `${firstTemplate.id}-${field.key}`,
-          key: field.key,
-          label: field.label,
-          type: field.type,
-          mode: field.mode || 'manual',
-          parentDepth: Number(field.parentDepth || 0),
-          childDepth: Number(field.childDepth || 0),
-        })) || [],
-    })
-  }, [hasTemplateChanges, identificationTemplates, selectedTemplateEditorId])
+    setSelectedTemplateEditorId((current) => (current === firstTemplate.id ? current : firstTemplate.id))
+    setTemplateFormIfChanged(buildTemplateFormState(firstTemplate))
+  }, [hasTemplateChanges, identificationTemplates, selectedTemplateEditorId, setTemplateFormIfChanged])
 
 
   useEffect(() => {
@@ -1823,9 +2298,10 @@ function MainApp() {
   }, [mobileConnectionCount])
 
   useEffect(() => {
-    if (!currentUser || !selectedProjectId) {
+    if (!currentUser || !selectedProjectId || (desktopEnvironment && effectiveDesktopServerConnectionStatus !== 'connected')) {
       presenceRequestSequenceRef.current += 1
-      setProjectPresenceUsers([])
+      projectPresenceSignatureRef.current = '[]'
+      setProjectPresenceUsers((current) => (current.length ? [] : current))
       return undefined
     }
 
@@ -1838,14 +2314,28 @@ function MainApp() {
         if (cancelled || requestSequence !== presenceRequestSequenceRef.current) {
           return
         }
-        setProjectPresenceUsers(payload.users || [])
+        const nextUsers = Array.isArray(payload.users) ? payload.users : []
+        const nextSignature = JSON.stringify(
+          nextUsers.map((user) => ({
+            userId: user?.userId || '',
+            username: user?.username || '',
+            selectedNodeId: user?.selectedNodeId || '',
+            selectedNodeName: user?.selectedNodeName || '',
+          })),
+        )
+        if (nextSignature === projectPresenceSignatureRef.current) {
+          return
+        }
+        projectPresenceSignatureRef.current = nextSignature
+        setProjectPresenceUsers(nextUsers)
       } catch (presenceError) {
         if (presenceError instanceof ApiError && presenceError.status === 401) {
           handleAuthLost()
           return
         }
         if (!cancelled) {
-          setProjectPresenceUsers([])
+          projectPresenceSignatureRef.current = '[]'
+          setProjectPresenceUsers((current) => (current.length ? [] : current))
         }
       }
     }
@@ -1871,7 +2361,7 @@ function MainApp() {
       window.removeEventListener('focus', handleVisibilityChange)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [currentUser, desktopEnvironment, handleAuthLost, selectedProjectId])
+  }, [currentUser, desktopEnvironment, effectiveDesktopServerConnectionStatus, handleAuthLost, selectedProjectId])
 
   useEffect(() => {
     if (resolvedLeftActivePanel !== leftActivePanel) {
@@ -1991,33 +2481,6 @@ function MainApp() {
       throw error
     }
   }
-
-  const patchProjectPreferencesRequest = useCallback(async (projectId, nextPreferences) => {
-    const rollbackLocalEvent = beginLocalEventExpectation()
-    const requestSignature = JSON.stringify(nextPreferences)
-    const requestSequence = ++uiRequestSequenceRef.current
-    try {
-      const updatedProject = await api(`/api/projects/${projectId}/preferences`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(nextPreferences),
-      })
-
-      if (requestSequence !== uiRequestSequenceRef.current) {
-        return updatedProject
-      }
-
-      if (pendingUiSignatureRef.current && pendingUiSignatureRef.current !== requestSignature) {
-        return updatedProject
-      }
-
-      applyProjectUpdate(updatedProject)
-      return updatedProject
-    } catch (error) {
-      rollbackLocalEvent()
-      throw error
-    }
-  }, [applyProjectUpdate, beginLocalEventExpectation])
 
   const saveNodeMediaEdits = useCallback(async (nodeId, mediaId, imageEdits) => {
     if (!nodeId || !mediaId) {
@@ -2149,53 +2612,21 @@ function MainApp() {
       return undefined
     }
 
-    const nextUi = {
-      showGrid,
-      canvasTransform: transform,
-      selectedNodeIds: effectiveSelectedNodeIds,
-      leftSidebarOpen,
-      rightSidebarOpen,
-      leftSidebarWidth,
-      rightSidebarWidth,
-      leftActivePanel: resolvedLeftActivePanel,
-      rightActivePanel: resolvedRightActivePanel,
-      panelDock,
-    }
+    const nextUi = buildCurrentProjectUiSnapshot()
     const signature = JSON.stringify(nextUi)
     if (signature === loadedUiSignatureRef.current) {
       return undefined
     }
+    sessionProjectUiByProjectIdRef.current.set(selectedProjectId, nextUi)
     pendingUiSignatureRef.current = signature
-
-    const handle = window.setTimeout(() => {
-      patchProjectPreferencesRequest(selectedProjectId, nextUi).catch((saveError) => {
-        pendingUiSignatureRef.current = null
-        setError(saveError.message)
-      })
-    }, 500)
-
-    return () => {
-      window.clearTimeout(handle)
-    }
+    return undefined
   }, [
+    buildCurrentProjectUiSnapshot,
     currentUser,
-    leftActivePanel,
-    leftSidebarOpen,
-    leftSidebarWidth,
-    patchProjectPreferencesRequest,
-    panelDock,
-    resolvedLeftActivePanel,
-    resolvedRightActivePanel,
-    rightActivePanel,
-    rightSidebarOpen,
-    rightSidebarWidth,
+    isPanelWindow,
     selectedProjectId,
-    effectiveSelectedNodeIds,
-    showGrid,
-    transform,
     tree?.project,
     projectUiReady,
-    isPanelWindow,
   ])
 
   async function setProjectCollapsedStateRequest(projectId, collapsed) {
@@ -2752,6 +3183,7 @@ function MainApp() {
 
         initializedAuthProfileIdRef.current = targetProfileId
         beginProjectTransition(created.project.id)
+        setManualProjectSelectionRequired(false)
         updateUrlState(created.project.id, created.root?.id || null, getUrlState().transform)
         setProjectName('')
         setShowProjectDialog(null)
@@ -2772,6 +3204,7 @@ function MainApp() {
       })
 
       beginProjectTransition(created.project.id)
+      setManualProjectSelectionRequired(false)
       setProjectName('')
       setShowProjectDialog(null)
       setOpenMenu(null)
@@ -3853,6 +4286,7 @@ function MainApp() {
       const importedTree = await uploadWithProgress('/api/projects/import', formData, setTransferProgress)
 
       beginProjectTransition(importedTree.project.id)
+      setManualProjectSelectionRequired(false)
       applyTreePayload(importedTree)
       setSelectedProjectId(importedTree.project.id)
       setSelectedNodeId(importedTree.root?.id ?? null)
@@ -4536,6 +4970,7 @@ function MainApp() {
               beginPreviewPan={beginPreviewPan}
               busy={busy}
               extractNodeMediaToChild={extractNodeMediaToChildRequest}
+              networkAvailable={!desktopEnvironment || effectiveDesktopServerConnectionStatus === 'connected'}
               patchNodeMediaEdits={saveNodeMediaEdits}
               previewTransform={previewTransform}
               previewViewportRef={previewViewportRef}
@@ -4580,10 +5015,7 @@ function MainApp() {
           <SearchPanel
             key={selectedProjectId || 'global'}
             bulkSelectNodeIds={bulkSelectSearchResults}
-            onResultsChange={(nodeIds) => {
-              setSearchResultsInitialized(true)
-              setSearchResultNodeIds(nodeIds)
-            }}
+            onResultsChange={handleSearchResultsChange}
             onSelectNode={selectNodeAndFocus}
             projectId={selectedProjectId}
             selectedNodeId={selectedNodeId}
@@ -4795,6 +5227,7 @@ function MainApp() {
         bulkSelectionCount={bulkSelectionCount}
         bulkTemplateCount={selectionNodesWithTemplates.length}
         busy={busy}
+        canCloseProjectDialog={!manualProjectSelectionRequired && Boolean(selectedProjectId && tree?.project?.id === selectedProjectId)}
         changePassword={changePassword}
         changeUsername={changeUsername}
         confirmApplyTemplateSelection={confirmApplyTemplateSelection}
@@ -4871,6 +5304,7 @@ function MainApp() {
         setShowProjectDialog={setShowProjectDialog}
         setShowProjectId={(projectId) => {
           beginProjectTransition(projectId)
+          setManualProjectSelectionRequired(false)
           setSelectedProjectId(projectId)
         }}
         setTemplateDialog={setTemplateDialog}
@@ -4896,6 +5330,13 @@ function MainApp() {
             onContinueToProject={() => setShowMobileEntryPrompt(false)}
             onOpenCapture={navigateToCapture}
           />
+        </div>
+      )
+    }
+    if (desktopEnvironment && showProjectDialog === 'open') {
+      return (
+        <div className="app-shell" data-theme={theme}>
+          {renderAppDialogs()}
         </div>
       )
     }
@@ -4931,20 +5372,10 @@ function MainApp() {
     )
   }
 
-  if (desktopConnectedAccountRequired) {
-    return (
-      <div className="app-shell app-shell--auth" data-theme={theme}>
-        {renderDesktopServerManager(false)}
-        {renderAppDialogs()}
-      </div>
-    )
-  }
-
   if (!currentUser) {
     if (desktopEnvironment) {
       return (
-        <div className="app-shell app-shell--auth" data-theme={theme}>
-          {renderDesktopServerManager(false)}
+        <div className="app-shell" data-theme={theme}>
           {renderAppDialogs()}
         </div>
       )
