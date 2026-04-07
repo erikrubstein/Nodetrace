@@ -498,6 +498,28 @@ export default function TopBar({
                   Manage Server Profiles
                 </button>
               ) : null}
+              <button
+                className="menu-item"
+                disabled={busy}
+                onClick={() => {
+                  onGenerateSessionCode?.()
+                  setOpenMenu(null)
+                }}
+                type="button"
+              >
+                Generate Session Code
+              </button>
+              <button
+                className="menu-item"
+                disabled={busy}
+                onClick={() => {
+                  onResetCache?.()
+                  setOpenMenu(null)
+                }}
+                type="button"
+              >
+                Reset Cache
+              </button>
               <div className="menu-submenu-wrap">
                 <button className="menu-item" type="button">
                   <span>Apply Theme</span>
@@ -530,28 +552,6 @@ export default function TopBar({
                   </button>
                 </div>
               </div>
-              <button
-                className="menu-item"
-                disabled={busy}
-                onClick={() => {
-                  onResetCache?.()
-                  setOpenMenu(null)
-                }}
-                type="button"
-              >
-                Reset Cache
-              </button>
-              <button
-                className="menu-item"
-                disabled={busy}
-                onClick={() => {
-                  onGenerateSessionCode?.()
-                  setOpenMenu(null)
-                }}
-                type="button"
-              >
-                Generate Session Code
-              </button>
             </div>
           ) : null}
         </div>
