@@ -6,7 +6,7 @@ import https from 'node:https'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { app, BrowserWindow, ipcMain, safeStorage, session } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, nativeImage, safeStorage, session } from 'electron'
 import { getPanelInitialWidth, getPanelMinWidth } from '../../packages/shared/src/panelSizing.js'
 
 const desktopDir = path.dirname(fileURLToPath(import.meta.url))
@@ -1317,6 +1317,20 @@ ipcMain.handle('desktop:delete-profile-account', (_event, payload) =>
 )
 ipcMain.handle('desktop:clear-cache', async () => {
   await session.defaultSession.clearCache()
+  return { ok: true }
+})
+ipcMain.handle('desktop:copy-image-to-clipboard', (_event, payload) => {
+  const base64 = String(payload?.base64 || '').trim()
+  if (!base64) {
+    throw new Error('No image data was provided for clipboard copy')
+  }
+
+  const image = nativeImage.createFromBuffer(Buffer.from(base64, 'base64'))
+  if (image.isEmpty()) {
+    throw new Error('Unable to convert image for clipboard copy')
+  }
+
+  clipboard.writeImage(image)
   return { ok: true }
 })
 

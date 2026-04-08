@@ -6,6 +6,7 @@ import {
   normalizeImageEdits,
   renderImageEditsToCanvas,
 } from '../lib/image'
+import { copyDesktopImageToClipboard, isDesktopEnvironment } from '../lib/desktop'
 import ImageAdjustmentControls from './ImageAdjustmentControls'
 
 function tooltipButton({ active = false, disabled = false, iconClassName, label, onClick }) {
@@ -490,10 +491,21 @@ export default function PreviewPanel({
 
   async function handleCopy() {
     try {
+      const blob = await createEditedBlob()
+      if (isDesktopEnvironment()) {
+        const arrayBuffer = await blob.arrayBuffer()
+        const bytes = new Uint8Array(arrayBuffer)
+        let binary = ''
+        const chunkSize = 0x8000
+        for (let index = 0; index < bytes.length; index += chunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+        }
+        await copyDesktopImageToClipboard(btoa(binary))
+        return
+      }
       if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
         throw new Error('Image copy is not supported in this browser.')
       }
-      const blob = await createEditedBlob()
       try {
         await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })])
       } catch {

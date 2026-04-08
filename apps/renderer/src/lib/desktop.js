@@ -169,6 +169,14 @@ export function clearDesktopCache() {
   )
 }
 
+export function copyDesktopImageToClipboard(base64) {
+  return (
+    window.nodetraceDesktop?.copyImageToClipboard?.({ base64 }).catch((error) => {
+      throw normalizeDesktopError(error)
+    }) || Promise.resolve({ ok: false })
+  )
+}
+
 export function subscribeDesktopServerState(callback) {
   return window.nodetraceDesktop?.onServerStateChange?.(callback) || (() => {})
 }

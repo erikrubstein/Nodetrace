@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('nodetraceDesktop', {
     ipcRenderer.invoke('desktop:change-profile-account-password', { id, currentPassword, newPassword }),
   deleteProfileAccount: (id, username) => ipcRenderer.invoke('desktop:delete-profile-account', { id, username }),
   clearCache: () => ipcRenderer.invoke('desktop:clear-cache'),
+  copyImageToClipboard: (payload) => ipcRenderer.invoke('desktop:copy-image-to-clipboard', payload),
   getPersistedWorkspaceState: (scopeKey) => ipcRenderer.invoke('desktop:get-persisted-workspace-state', scopeKey),
   updateWorkspaceState: (payload) => ipcRenderer.invoke('desktop:update-workspace-state', payload),
   onWindowStateChange: (callback) => {
