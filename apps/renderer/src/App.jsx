@@ -46,6 +46,7 @@ import {
   selectDesktopServerProfile,
   subscribeDesktopServerState,
   subscribeDesktopMenuCommand,
+  subscribeDesktopPanelWindowState,
   subscribeDesktopWindowState,
   toggleMaximizeDesktopWindow,
   updateDesktopWorkspaceState,
@@ -872,7 +873,7 @@ function MainApp() {
 
   function toggleSidebarPanel(panelId) {
     if (!isPanelWindow && isDesktopEnvironment() && poppedOutPanelIds.includes(panelId)) {
-      void popoutPanel(panelId)
+      dockPanelIntoSidebar(panelId)
       return
     }
 
@@ -4994,6 +4995,22 @@ function MainApp() {
       channel.close()
     }
   }, [dockPanelIntoSidebar, isPanelWindow, panelWindowId])
+
+  useEffect(() => {
+    if (!desktopEnvironment || isPanelWindow) {
+      return undefined
+    }
+
+    return subscribeDesktopPanelWindowState((payload) => {
+      const panelId = String(payload?.panelId || '').trim()
+      if (!panelId) {
+        return
+      }
+      setPoppedOutPanelIds((current) =>
+        payload?.open ? (current.includes(panelId) ? current : [...current, panelId]) : current.filter((id) => id !== panelId),
+      )
+    })
+  }, [desktopEnvironment, isPanelWindow])
 
   useLayoutEffect(() => {
     if (!pendingFocusNodeIdRef.current || pendingFocusNodeIdRef.current !== selectedNodeId) {

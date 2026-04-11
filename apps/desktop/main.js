@@ -211,6 +211,14 @@ function buildApplicationMenu() {
   ])
 }
 
+function broadcastPanelWindowState(payload) {
+  for (const window of mainWindows) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('desktop:panel-window-state', payload)
+    }
+  }
+}
+
 function createSplashWindow() {
   const splashWindow = new BrowserWindow({
     show: true,
@@ -1028,6 +1036,15 @@ async function loadWindow(window, url) {
   await window.loadURL(url)
 }
 
+function closeAllPanelWindows() {
+  for (const [panelId, panelWindow] of panelWindows.entries()) {
+    if (!panelWindow.isDestroyed()) {
+      panelWindow.destroy()
+    }
+    panelWindows.delete(panelId)
+  }
+}
+
 function createMainWindow(options = {}) {
   const { showSplash = false } = options
   const splashWindow = showSplash ? createSplashWindow() : null
@@ -1046,6 +1063,9 @@ function createMainWindow(options = {}) {
   attachWindowStateListeners(mainWindow, 'Main window', {
     autoShow: !showSplash,
   })
+  mainWindow.on('close', () => {
+    closeAllPanelWindows()
+  })
   mainWindow.on('closed', () => {
     logDesktop('Main window closed')
     const latestWorkspaceState = latestWorkspaceStateByWindowId.get(mainContentsId)
@@ -1058,6 +1078,7 @@ function createMainWindow(options = {}) {
     }
     latestWorkspaceStateByWindowId.delete(mainContentsId)
     mainWindows.delete(mainWindow)
+    closeAllPanelWindows()
     resolvePendingSplash(null, mainContentsId, { showWindow: false })
   })
   loadWindow(mainWindow, buildRendererUrl()).catch((error) => {
@@ -1108,6 +1129,7 @@ function openPanelWindow(options = {}) {
   attachWindowStateListeners(panelWindow, `Panel window ${panelId}`)
   panelWindow.on('closed', () => {
     panelWindows.delete(panelId)
+    broadcastPanelWindowState({ panelId, open: false })
   })
 
   const windowUrl = new URL(buildRendererUrl())
@@ -1123,6 +1145,8 @@ function openPanelWindow(options = {}) {
     console.error(error)
     panelWindow.loadURL(`data:text/plain,${encodeURIComponent(error.message)}`).catch(() => {})
   })
+
+  broadcastPanelWindowState({ panelId, open: true })
 
   return { ok: true, panelId }
 }

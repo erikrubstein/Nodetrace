@@ -48,4 +48,11 @@ contextBridge.exposeInMainWorld('nodetraceDesktop', {
       ipcRenderer.removeListener('desktop:server-state', listener)
     }
   },
+  onPanelWindowStateChange: (callback) => {
+    const listener = (_event, value) => callback(value)
+    ipcRenderer.on('desktop:panel-window-state', listener)
+    return () => {
+      ipcRenderer.removeListener('desktop:panel-window-state', listener)
+    }
+  },
 })

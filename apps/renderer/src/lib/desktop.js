@@ -188,3 +188,7 @@ export function subscribeDesktopServerState(callback) {
 export function subscribeDesktopMenuCommand(callback) {
   return window.nodetraceDesktop?.onMenuCommand?.(callback) || (() => {})
 }
+
+export function subscribeDesktopPanelWindowState(callback) {
+  return window.nodetraceDesktop?.onPanelWindowStateChange?.(callback) || (() => {})
+}

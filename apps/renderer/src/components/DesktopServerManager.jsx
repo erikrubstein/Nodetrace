@@ -71,6 +71,7 @@ export default function DesktopServerManager({
   showDesktopControls = false,
 }) {
   const openedAtRef = useRef(0)
+  const hasProfiles = profiles.length > 0
   const [mode, setMode] = useState('details')
   const [editor, setEditor] = useState(createEmptyEditor())
   const [editorSubmitAttempted, setEditorSubmitAttempted] = useState(false)
@@ -200,6 +201,7 @@ export default function DesktopServerManager({
 
   const registerPasswordsMatch =
     editor.authMode !== 'register' || String(editor.password || '') === String(editor.confirmPassword || '')
+  const effectiveMode = hasProfiles ? mode : 'edit'
   const canSaveProfile =
     !busy &&
     Boolean(normalizeBaseUrlInput(editor.baseUrl)) &&
@@ -267,18 +269,18 @@ export default function DesktopServerManager({
         onClick={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <div className="project-picker project-picker--desktop">
-          <div className="project-picker__card project-picker__card--servers">
-            <div className="project-picker__card-header">
-              <div className="project-picker__section-title">Manage Server Profiles</div>
-              <IconButton className="tool-button" disabled={busy} onClick={openCreateMode} tooltip="Add Server Profile">
-                <PlusIcon />
-              </IconButton>
-            </div>
-            <div className="project-picker__card-body project-picker__card-body--top">
-              <div className="project-list project-list--fill">
-                {profiles.length ? (
-                  profiles.map((profile) => {
+        <div className={`project-picker ${hasProfiles ? 'project-picker--desktop' : 'project-picker--desktop-empty'}`}>
+          {hasProfiles ? (
+            <div className="project-picker__card project-picker__card--servers">
+              <div className="project-picker__card-header">
+                <div className="project-picker__section-title">Manage Server Profiles</div>
+                <IconButton className="tool-button" disabled={busy} onClick={openCreateMode} tooltip="Add Server Profile">
+                  <PlusIcon />
+                </IconButton>
+              </div>
+              <div className="project-picker__card-body project-picker__card-body--top">
+                <div className="project-list project-list--fill">
+                  {profiles.map((profile) => {
                     const selected = profile.id === inspectedProfileId
                     const warning = profile.connectionStatus !== 'connected'
                     const warningClass =
@@ -306,34 +308,39 @@ export default function DesktopServerManager({
                         ) : null}
                       </button>
                     )
-                  })
-                ) : (
-                  <div className="inspector__notice">No server profiles saved yet.</div>
-                )}
+                  })}
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="project-picker__card project-picker__card--projects">
             <div className="project-picker__card-header">
               <div className="project-picker__section-title">
-                {mode === 'edit' ? (editor.id ? 'Edit Server Profile' : 'Add Server Profile') : 'Server Profile Details'}
+                {!hasProfiles
+                  ? 'Add Your First Server Profile'
+                  : effectiveMode === 'edit'
+                    ? (editor.id ? 'Edit Server Profile' : 'Add Server Profile')
+                    : 'Server Profile Details'}
               </div>
-              {mode === 'details' && inspectedProfile ? (
-                <IconButton
-                  className="tool-button"
-                  disabled={busy}
-                  onClick={() => void onDeleteProfile?.(inspectedProfile.id)}
-                  tooltip="Remove Saved Server Profile"
-                >
-                  <TrashIcon />
-                </IconButton>
-              ) : null}
+              <IconButton
+                className="tool-button"
+                disabled={busy || !inspectedProfile}
+                onClick={() => void onDeleteProfile?.(inspectedProfile?.id)}
+                tooltip="Remove Saved Server Profile"
+              >
+                <TrashIcon />
+              </IconButton>
             </div>
 
             <div className="project-picker__card-body project-picker__card-body--details">
-              {mode === 'edit' ? (
+              {effectiveMode === 'edit' ? (
                 <div className="desktop-account-manager__editor desktop-account-manager__panel">
+                  {!hasProfiles ? (
+                    <div className="inspector__notice">
+                      Add your first server profile to connect this desktop client to a Nodetrace server.
+                    </div>
+                  ) : null}
                   <div className="field-stack auth-fields">
                     <label>
                       <span>Server URL</span>
@@ -394,7 +401,7 @@ export default function DesktopServerManager({
                             }))
                           }
                         }
-                        placeholder="erikrubstein"
+                        placeholder="username"
                         value={editor.username}
                       />
                     </label>
@@ -552,11 +559,13 @@ export default function DesktopServerManager({
               )}
 
               <div className="project-picker__card-actions">
-                {mode === 'edit' ? (
+                {effectiveMode === 'edit' ? (
                   <>
-                    <button className="ghost-button" disabled={busy} onClick={closeEditor} type="button">
-                      Cancel
-                    </button>
+                    {hasProfiles ? (
+                      <button className="ghost-button" disabled={busy} onClick={closeEditor} type="button">
+                        Cancel
+                      </button>
+                    ) : null}
                     <button
                       className="primary-button"
                       disabled={!canSaveProfile}

@@ -73,8 +73,10 @@ export default function SearchPanel({
       : [],
   )
   const [anyTagOnly, setAnyTagOnly] = useState(() => Boolean(initialState?.anyTagOnly))
+  const [noTagOnly, setNoTagOnly] = useState(() => Boolean(initialState?.noTagOnly))
   const [selectedOwnerUsernames, setSelectedOwnerUsernames] = useState(() => (Array.isArray(initialState?.selectedOwnerUsernames) ? initialState.selectedOwnerUsernames : []))
   const [anyTemplateOnly, setAnyTemplateOnly] = useState(() => Boolean(initialState?.anyTemplateOnly))
+  const [noTemplateOnly, setNoTemplateOnly] = useState(() => Boolean(initialState?.noTemplateOnly))
   const [selectedStatusFilters, setSelectedStatusFilters] = useState(() =>
     Array.isArray(initialState?.selectedStatusFilters)
       ? initialState.selectedStatusFilters
@@ -100,7 +102,8 @@ export default function SearchPanel({
     Number(Boolean(selectedNoteFilters.length)) +
     Number(Boolean(selectedPhotoFilters.length)) +
     Number(Boolean(selectionScopeFilter)) +
-    Number(Boolean(anyTagOnly || selectedTags.length)) +
+    Number(Boolean(anyTagOnly || noTagOnly || selectedTags.length)) +
+    Number(Boolean(anyTemplateOnly || noTemplateOnly || selectedTemplateIds.length)) +
     Number(Boolean(selectedOwnerUsernames.length))
 
   const templateNameById = useMemo(
@@ -149,8 +152,10 @@ export default function SearchPanel({
         selectedTemplateIds,
         selectedTags,
         anyTagOnly,
+        noTagOnly,
         selectedOwnerUsernames,
         anyTemplateOnly,
+        noTemplateOnly,
         selectedStatusFilters,
         selectedNoteFilters,
         selectedPhotoFilters,
@@ -162,7 +167,9 @@ export default function SearchPanel({
     )
   }, [
     anyTagOnly,
+    noTagOnly,
     anyTemplateOnly,
+    noTemplateOnly,
     selectedNoteFilters,
     selectedPhotoFilters,
     query,
@@ -216,6 +223,9 @@ export default function SearchPanel({
       .filter((node) => node.type !== 'collapsed-group')
       .filter((node) => !loweredQuery || node.name.toLowerCase().includes(loweredQuery))
       .filter((node) => {
+        if (noTemplateOnly) {
+          return !node.identification?.templateId
+        }
         if (anyTemplateOnly) {
           return Boolean(node.identification?.templateId)
         }
@@ -238,6 +248,9 @@ export default function SearchPanel({
         return selectedNoteFilters.some((filterValue) => (filterValue === 'has_notes' ? hasNotes : !hasNotes))
       })
       .filter((node) => {
+        if (noTagOnly) {
+          return !Array.isArray(node.tags) || node.tags.length === 0
+        }
         if (anyTagOnly) {
           return Array.isArray(node.tags) && node.tags.length > 0
         }
@@ -280,6 +293,8 @@ export default function SearchPanel({
   }, [
     anyTagOnly,
     anyTemplateOnly,
+    noTagOnly,
+    noTemplateOnly,
     query,
     selectedNoteFilters,
     selectedPhotoFilters,
@@ -390,6 +405,7 @@ export default function SearchPanel({
                         type="button"
                         onClick={() => {
                           setAnyTemplateOnly(false)
+                          setNoTemplateOnly(false)
                           setSelectedTemplateIds([])
                           setSelectedStatusFilters([])
                           setSelectedNoteFilters([])
@@ -397,6 +413,7 @@ export default function SearchPanel({
                           setSelectionScopeFilter(false)
                           setSelectionScopeSeedIds([])
                           setAnyTagOnly(false)
+                          setNoTagOnly(false)
                           setSelectedTags([])
                           setSelectedOwnerUsernames([])
                         }}
@@ -498,6 +515,23 @@ export default function SearchPanel({
                             setAnyTagOnly((current) => {
                               const nextValue = !current
                               if (nextValue) {
+                                setNoTagOnly(false)
+                                setSelectedTags([])
+                              }
+                              return nextValue
+                            })
+                          },
+                          type: 'multiple',
+                        })}
+                        {optionRow({
+                          checked: noTagOnly,
+                          itemKey: '__no_tag__',
+                          label: 'None',
+                          onClick: () => {
+                            setNoTagOnly((current) => {
+                              const nextValue = !current
+                              if (nextValue) {
+                                setAnyTagOnly(false)
                                 setSelectedTags([])
                               }
                               return nextValue
@@ -514,6 +548,7 @@ export default function SearchPanel({
                             type="button"
                             onClick={() => {
                               setAnyTagOnly(false)
+                              setNoTagOnly(false)
                               setSelectedTags((current) =>
                                 current.includes(tag)
                                   ? current.filter((item) => item !== tag)
@@ -574,6 +609,23 @@ export default function SearchPanel({
                             setAnyTemplateOnly((current) => {
                               const nextValue = !current
                               if (nextValue) {
+                                setNoTemplateOnly(false)
+                                setSelectedTemplateIds([])
+                              }
+                              return nextValue
+                            })
+                          },
+                          type: 'multiple',
+                        })}
+                        {optionRow({
+                          checked: noTemplateOnly,
+                          itemKey: '__none__',
+                          label: 'None',
+                          onClick: () => {
+                            setNoTemplateOnly((current) => {
+                              const nextValue = !current
+                              if (nextValue) {
+                                setAnyTemplateOnly(false)
                                 setSelectedTemplateIds([])
                               }
                               return nextValue
@@ -590,6 +642,7 @@ export default function SearchPanel({
                             type="button"
                             onClick={() => {
                               setAnyTemplateOnly(false)
+                              setNoTemplateOnly(false)
                               setSelectedTemplateIds((current) =>
                                 current.includes(template.id)
                                   ? current.filter((id) => id !== template.id)

@@ -54,6 +54,7 @@ export function collectCollapsedPreviewItems(node, limit = 9, items = []) {
     items.push({
       id: child.id,
       imageUrl: child.previewUrl || child.imageUrl || null,
+      imageEdits: child.imageEdits || null,
       type: child.type,
     })
 
