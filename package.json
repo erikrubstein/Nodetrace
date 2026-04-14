@@ -1,8 +1,10 @@
 {
   "name": "nodetrace",
+  "productName": "Nodetrace",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "apps/desktop/launcher.cjs",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -16,6 +18,8 @@
     "start:desktop": "electron apps/desktop",
     "build": "npm run build:web",
     "build:web": "npm run build --workspace nodetrace-renderer",
+    "dist:win": "npm run build:web && electron-builder --win nsis",
+    "dist:mac": "npm run build:web && electron-builder --mac dmg",
     "preview:web": "npm run preview --workspace nodetrace-renderer",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
@@ -34,6 +38,7 @@
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
     "electron": "^41.0.3",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",

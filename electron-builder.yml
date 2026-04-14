@@ -1,0 +1,28 @@
+appId: com.nodetrace.desktop
+productName: Nodetrace
+directories:
+  buildResources: build
+  output: release
+files:
+  - dist/**
+  - apps/desktop/**
+  - apps/renderer/public/**
+  - packages/shared/**
+  - build/**
+  - package.json
+extraMetadata:
+  main: apps/desktop/launcher.cjs
+mac:
+  category: public.app-category.graphics-design
+  icon: build/icon.icns
+  identity: null
+  target:
+    - dmg
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+nsis:
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico

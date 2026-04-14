@@ -15,7 +15,16 @@ const preloadPath = path.join(desktopDir, 'preload.cjs')
 const desktopLogPath = path.join(repoRootDir, 'logs', 'desktop.log')
 const desktopStatePath = path.join(app.getPath('userData'), 'desktop-state.json')
 const rendererEntryPath = path.join(repoRootDir, 'dist', 'index.html')
-const appIconPath = path.join(repoRootDir, 'apps', 'renderer', 'public', 'nodetrace.svg')
+const buildAssetsDir = path.join(repoRootDir, 'build')
+const svgLogoPath = path.join(repoRootDir, 'apps', 'renderer', 'public', 'nodetrace.svg')
+const pngIconPath = path.join(buildAssetsDir, 'icon-1024.png')
+const icoIconPath = path.join(buildAssetsDir, 'icon.ico')
+const icnsIconPath = path.join(buildAssetsDir, 'icon.icns')
+const appIconPath =
+  process.platform === 'win32'
+    ? (fs.existsSync(icoIconPath) ? icoIconPath : svgLogoPath)
+    : (fs.existsSync(pngIconPath) ? pngIconPath : svgLogoPath)
+const dockIconPath = fs.existsSync(pngIconPath) ? pngIconPath : (fs.existsSync(icnsIconPath) ? icnsIconPath : svgLogoPath)
 const rendererDevUrl = process.argv.find((arg) => arg.startsWith('--dev-url='))?.slice('--dev-url='.length) || ''
 const isMac = process.platform === 'darwin'
 
@@ -238,7 +247,7 @@ function createSplashWindow() {
     },
   })
 
-  const inlineLogo = fs.readFileSync(appIconPath, 'utf8')
+  const inlineLogo = fs.readFileSync(svgLogoPath, 'utf8')
   const splashHtml = `<!doctype html>
   <html>
     <head>
@@ -1567,7 +1576,7 @@ await app.whenReady()
 app.setName('Nodetrace')
 if (isMac) {
   Menu.setApplicationMenu(buildApplicationMenu())
-  const dockIcon = nativeImage.createFromPath(appIconPath)
+  const dockIcon = nativeImage.createFromPath(dockIconPath)
   if (!dockIcon.isEmpty()) {
     app.dock.setIcon(dockIcon)
   }
