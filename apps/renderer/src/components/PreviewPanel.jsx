@@ -88,18 +88,6 @@ export default function PreviewPanel({
   const localEditSignature = useMemo(() => JSON.stringify(normalizeImageEdits(localEdits)), [localEdits])
   const hasImage = Boolean(selectedMedia?.imageUrl)
   const hasCrop = Boolean(localEdits.crop)
-  const hasAdjustmentChanges = useMemo(
-    () =>
-      localEdits.brightness !== defaultImageEdits.brightness ||
-      localEdits.contrast !== defaultImageEdits.contrast ||
-      localEdits.exposure !== defaultImageEdits.exposure ||
-      localEdits.sharpness !== defaultImageEdits.sharpness ||
-      localEdits.denoise !== defaultImageEdits.denoise ||
-      localEdits.invert !== defaultImageEdits.invert ||
-      localEdits.rotationTurns !== defaultImageEdits.rotationTurns,
-    [localEdits],
-  )
-
   useEffect(() => {
     let cancelled = false
     let objectUrl = null
@@ -252,7 +240,6 @@ export default function PreviewPanel({
       sharpness: defaultImageEdits.sharpness,
       denoise: defaultImageEdits.denoise,
       invert: defaultImageEdits.invert,
-      rotationTurns: defaultImageEdits.rotationTurns,
     }))
     setCropMode(false)
     setCropSelection(null)
@@ -524,6 +511,7 @@ export default function PreviewPanel({
 
   const actionGroups = [
     {
+      align: 'right',
       label: 'File',
       actions: [
         tooltipButton({
@@ -547,7 +535,8 @@ export default function PreviewPanel({
       ],
     },
     {
-      label: 'Adjust',
+      align: 'center',
+      label: 'Transform',
       actions: [
         tooltipButton({
           disabled: !hasImage || busy,
@@ -571,22 +560,10 @@ export default function PreviewPanel({
           label: 'Reset Crop',
           onClick: resetCrop,
         }),
-        tooltipButton({
-          active: localEdits.invert,
-          disabled: !hasImage || busy,
-          iconClassName: 'fa-solid fa-circle-half-stroke',
-          label: 'Invert Colors',
-          onClick: () => updateEdit('invert', !localEdits.invert),
-        }),
-        tooltipButton({
-          disabled: !hasImage || busy || !hasAdjustmentChanges,
-          iconClassName: 'fa-solid fa-sliders',
-          label: 'Reset Adjustments',
-          onClick: resetAdjustments,
-        }),
       ],
     },
     {
+      align: 'left',
       label: 'Photo',
       actions: [
         tooltipButton({
@@ -604,7 +581,7 @@ export default function PreviewPanel({
         tooltipButton({
           disabled: !hasImage || busy,
           iconClassName: 'fa-solid fa-turn-down',
-          label: 'Convert Photo To Child Node',
+          label: 'Conver to Child',
           onClick: async () => {
             try {
               await extractNodeMediaToChild(selectedNode.id, selectedMedia.id)
@@ -633,7 +610,10 @@ export default function PreviewPanel({
     <div className="preview-panel">
       <div className="preview-panel__actions">
         {actionGroups.map((group) => (
-          <div key={group.label} className="preview-panel__action-group">
+          <div
+            key={group.label}
+            className={`preview-panel__action-group preview-panel__action-group--${group.align}`}
+          >
             <div className="preview-panel__action-label">{group.label}</div>
             <div className="preview-panel__action-buttons">{group.actions}</div>
           </div>
@@ -691,6 +671,8 @@ export default function PreviewPanel({
           <ImageAdjustmentControls
             edits={localEdits}
             onChange={setLocalEdits}
+            onResetAll={resetAdjustments}
+            onToggleInvert={() => updateEdit('invert', !localEdits.invert)}
           />
         </>
       ) : (
