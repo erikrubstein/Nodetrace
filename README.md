@@ -309,7 +309,7 @@ Normal local use does not require much configuration on the client side. The bac
 
 For implementation details and contribution guidance, see:
 
-- [../architecture.md](../architecture.md)
+- [../CONTEXT.md](../CONTEXT.md)
 
 That document explains:
 
