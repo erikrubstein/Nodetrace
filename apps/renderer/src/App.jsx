@@ -72,7 +72,6 @@ import {
   normalizeClientProjectUi,
   readStoredClientPanelLayout,
   readStoredClientProjectUi,
-  readStoredLastProjectId,
   writeStoredClientPanelLayout,
   writeStoredClientProjectUi,
   writeStoredClientTheme,
@@ -317,14 +316,6 @@ function MainApp() {
     return nextState
   }, [desktopEnvironment])
 
-  const getPreferredProjectId = useCallback(
-    () =>
-      desktopEnvironment
-        ? desktopPersistedWorkspaceState?.projectId || null
-        : readStoredLastProjectId(clientProjectUiScopeKey),
-    [clientProjectUiScopeKey, desktopEnvironment, desktopPersistedWorkspaceState?.projectId],
-  )
-
   const clearRememberedProjectSelection = useCallback(() => {
     if (!clientProjectUiScopeKey) {
       return
@@ -340,6 +331,20 @@ function MainApp() {
     }
     writeStoredLastProjectId(clientProjectUiScopeKey, null)
   }, [clientProjectUiScopeKey, desktopEnvironment])
+
+  const closeProjectToPicker = useCallback(() => {
+    setPendingProjectTransitionId(null)
+    setProjectListLoading(false)
+    setSelectedProjectId(null)
+    setTree(null)
+    setSelectedNodeId(null)
+    setProjectUiReady(false)
+    setMobileConnectionCount(0)
+    setManualProjectSelectionRequired(true)
+    setShowProjectDialog('open')
+    updateUrlState(null, null, getUrlState().transform)
+    clearRememberedProjectSelection()
+  }, [clearRememberedProjectSelection])
 
   const closeDisconnectedProject = useCallback(() => {
     setPendingProjectTransitionId(null)
@@ -1650,7 +1655,6 @@ function MainApp() {
     currentUser,
     desktopEnvironment,
     desktopConnectionStatus: effectiveDesktopServerConnectionStatus,
-    getPreferredProjectId,
     projectBootstrapReady: desktopEnvironment ? desktopPersistedWorkspaceReady : true,
     requireManualProjectSelection: manualProjectSelectionRequired,
     onAuthLost: handleAuthLost,
@@ -1683,7 +1687,7 @@ function MainApp() {
       return
     }
 
-    void loadProjects(manualProjectSelectionRequired ? null : selectedProjectId || getUrlState().projectId || null, {
+    void loadProjects(manualProjectSelectionRequired ? null : selectedProjectId || null, {
       silent: showProjectDialog === 'open',
     })
       .then(() => {
@@ -1699,7 +1703,6 @@ function MainApp() {
     loadProjects,
     loadTree,
     manualProjectSelectionRequired,
-    getPreferredProjectId,
     effectiveDesktopServerConnectionStatus,
     selectedProjectId,
     showProjectDialog,
@@ -1795,6 +1798,9 @@ function MainApp() {
     if (!authReady) {
       return
     }
+    if (currentUser && !selectedProjectId && !tree && showProjectDialog == null) {
+      setShowProjectDialog('open')
+    }
     if (currentUser && !selectedProjectId && !tree && !manualProjectSelectionRequired) {
       return
     }
@@ -1802,7 +1808,7 @@ function MainApp() {
       return
     }
     updateUrlState(selectedProjectId, selectedNodeId || getUrlState().nodeId)
-  }, [authReady, currentUser, manualProjectSelectionRequired, selectedNodeId, selectedProjectId, tree])
+  }, [authReady, currentUser, manualProjectSelectionRequired, selectedNodeId, selectedProjectId, showProjectDialog, tree])
 
   useEffect(() => {
     if (!isDesktopEnvironment() || typeof BroadcastChannel === 'undefined') {
@@ -2380,7 +2386,7 @@ function MainApp() {
       if (desktopEnvironment) {
         await refreshDesktopServerState()
       }
-      await loadProjects(getUrlState().projectId)
+      await loadProjects(null)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -3100,9 +3106,9 @@ function MainApp() {
     try {
       await api(`/api/projects/${tree.project.id}`, { method: 'DELETE' })
       setOpenMenu(null)
-      setShowProjectDialog(null)
       setDeleteProjectText('')
-      await loadProjects()
+      closeProjectToPicker()
+      await loadProjects(null, { silent: true })
     } catch (submitError) {
       setError(submitError.message)
     } finally {

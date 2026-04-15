@@ -15,7 +15,6 @@ export default function useProjectSync({
   currentUser,
   desktopEnvironment = false,
   desktopConnectionStatus = null,
-  getPreferredProjectId,
   projectBootstrapReady = true,
   requireManualProjectSelection = false,
   onAuthLost,
@@ -90,14 +89,21 @@ export default function useProjectSync({
           return projectList
         }
 
-        const nextId = hasPreferredProjectId ? preferredProjectId : projectList[0].id
+        if (!hasPreferredProjectId) {
+          updateUrlState(null, null, getUrlState().transform)
+          setSelectedProjectId(null)
+          setTree(null)
+          setSelectedNodeId(null)
+          setStatus('Select a project to continue.')
+          return projectList
+        }
 
         debugLog('loadProjects selected project', {
           preferredProjectId,
-          nextId,
+          nextId: preferredProjectId,
           projectIds: projectList.map((project) => project.id),
         })
-        setSelectedProjectId(nextId)
+        setSelectedProjectId(preferredProjectId)
         setStatus('')
         return projectList
       } finally {
@@ -157,7 +163,7 @@ export default function useProjectSync({
       }
 
       try {
-        const preferredProjectId = requireManualProjectSelection ? null : getUrlState().projectId || getPreferredProjectId?.() || null
+        const preferredProjectId = requireManualProjectSelection ? null : selectedProjectId || null
         await loadProjects(preferredProjectId)
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
@@ -172,7 +178,7 @@ export default function useProjectSync({
     }
 
     void initialize()
-  }, [currentUserId, desktopProfileConnected, getPreferredProjectId, loadProjects, onAuthLost, projectBootstrapReady, requireManualProjectSelection, setError, setProjectListLoading, setProjects, setSelectedNodeId, setSelectedProjectId, setStatus, setTree])
+  }, [currentUserId, desktopProfileConnected, loadProjects, onAuthLost, projectBootstrapReady, requireManualProjectSelection, selectedProjectId, setError, setProjectListLoading, setProjects, setSelectedNodeId, setSelectedProjectId, setStatus, setTree])
 
   useEffect(() => {
     if (!currentUserId || !desktopProfileConnected) {
@@ -183,7 +189,7 @@ export default function useProjectSync({
 
     async function refreshProjects() {
       try {
-        const preferredProjectId = requireManualProjectSelection ? null : selectedProjectId || getUrlState().projectId
+        const preferredProjectId = requireManualProjectSelection ? null : selectedProjectId || null
         await loadProjects(preferredProjectId, { silent: true })
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
