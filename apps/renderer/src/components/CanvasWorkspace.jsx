@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import IconButton from './IconButton'
 import { AddFolderIcon, AddPhotoIcon, AddVariantIcon, EyeLowVisionIcon, FitViewIcon, FocusNodeIcon, FolderIcon, GridIcon, PathIcon, RootNodeIcon } from './icons'
 import { defaultImageEdits, normalizeImageEdits, renderImageEditsToCanvas } from '../lib/image'
+import { NODE_HEIGHT, NODE_WIDTH } from '../lib/constants'
 
 const editedPreviewCache = new Map()
 const defaultImageEditsSignature = JSON.stringify(defaultImageEdits)
@@ -150,6 +151,7 @@ export default function CanvasWorkspace({
   transform,
   tree,
   uploadFiles,
+  viewportSize,
   viewportRef,
 }) {
   const isolatedNodeIdSet = useMemo(() => {
@@ -163,6 +165,27 @@ export default function CanvasWorkspace({
   }, [canvasIsolationMode, searchResultNodeIds, selectedNodePathIds])
   const pathScrollRef = useRef(null)
   const pathScrollTargetRef = useRef(0)
+  const treeBounds = useMemo(() => {
+    const visibleNodes = Array.isArray(layout.nodes) && layout.nodes.length ? layout.nodes : null
+    if (!visibleNodes) {
+      return {
+        centerX: (layout.width || NODE_WIDTH) / 2,
+        centerY: (layout.height || NODE_HEIGHT) / 2,
+      }
+    }
+
+    const left = Math.min(...visibleNodes.map((item) => item.x))
+    const top = Math.min(...visibleNodes.map((item) => item.y))
+    const right = Math.max(...visibleNodes.map((item) => item.x + NODE_WIDTH))
+    const bottom = Math.max(...visibleNodes.map((item) => item.y + NODE_HEIGHT))
+
+    return {
+      centerX: (left + right) / 2,
+      centerY: (top + bottom) / 2,
+    }
+  }, [layout.height, layout.nodes, layout.width])
+  const centeredPanX = Math.round(transform.x + treeBounds.centerX * transform.scale - ((viewportSize?.width || 0) / 2))
+  const centeredPanY = Math.round(transform.y + treeBounds.centerY * transform.scale - ((viewportSize?.height || 0) / 2))
 
   useLayoutEffect(() => {
     const element = pathScrollRef.current
@@ -548,8 +571,8 @@ export default function CanvasWorkspace({
         )}
       </div>
       <div className="canvas-caption canvas-caption--right">
-        {Math.round(transform.scale * 100)}% | X {Math.round(transform.x)} | Y {Math.round(transform.y)} |{' '}
-        {tree?.nodes?.length ?? 0} nodes
+        {Math.round(transform.scale * 100)}% | X {centeredPanX} | Y {centeredPanY} | {tree?.nodes?.length ?? 0}{' '}
+        nodes
       </div>
       {contextMenu ? (
         <div

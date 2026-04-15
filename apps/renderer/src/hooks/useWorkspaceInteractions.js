@@ -44,7 +44,9 @@ export default function useWorkspaceInteractions({
   const cameraSelectionRef = useRef(null)
   const marqueeRef = useRef(null)
   const suppressCanvasContextMenuRef = useRef(false)
+  const viewportSizeRef = useRef({ width: 0, height: 0 })
   const [canvasMarqueeRect, setCanvasMarqueeRect] = useState(null)
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
 
   const clampCanvasTransform = useCallback(
     (nextTransform) => {
@@ -615,6 +617,50 @@ export default function useWorkspaceInteractions({
   }, [clampCanvasTransform, setTransform, transform])
 
   useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return undefined
+    }
+
+    function syncViewportSize(width, height) {
+      const previous = viewportSizeRef.current
+      viewportSizeRef.current = { width, height }
+      setViewportSize((current) =>
+        current.width === width && current.height === height ? current : { width, height },
+      )
+
+      if (!previous.width || !previous.height || (previous.width === width && previous.height === height)) {
+        return
+      }
+
+      setTransform((current) => {
+        const worldCenterX = (previous.width / 2 - current.x) / Math.max(0.001, current.scale)
+        const worldCenterY = (previous.height / 2 - current.y) / Math.max(0.001, current.scale)
+        return clampCanvasTransform({
+          ...current,
+          x: width / 2 - worldCenterX * current.scale,
+          y: height / 2 - worldCenterY * current.scale,
+        })
+      })
+    }
+
+    syncViewportSize(viewport.clientWidth, viewport.clientHeight)
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) {
+        return
+      }
+      syncViewportSize(entry.contentRect.width, entry.contentRect.height)
+    })
+
+    observer.observe(viewport)
+    return () => {
+      observer.disconnect()
+    }
+  }, [clampCanvasTransform, setTransform])
+
+  useEffect(() => {
     const element = previewViewportRef.current
     if (!element || !previewVisible) {
       return undefined
@@ -772,6 +818,7 @@ export default function useWorkspaceInteractions({
     resizeRef,
     stopPanning,
     stopPreviewPan,
+    viewportSize,
     viewportRef,
   }
 }

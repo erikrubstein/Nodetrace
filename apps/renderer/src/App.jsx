@@ -4148,6 +4148,7 @@ function MainApp() {
     resizeRef,
     stopPanning,
     stopPreviewPan,
+    viewportSize,
     viewportRef,
   } = useWorkspaceInteractions({
     addToEffectiveSelection,
@@ -5075,11 +5076,12 @@ function MainApp() {
           }
           toggleGrid={toggleGridPreference}
           toggleMultiSelection={toggleMultiSelection}
-          transform={transform}
-          tree={tree}
-          uploadFiles={uploadFiles}
-          viewportRef={viewportRef}
-        />
+            transform={transform}
+            tree={tree}
+            uploadFiles={uploadFiles}
+            viewportSize={viewportSize}
+            viewportRef={viewportRef}
+          />
         <DockedSidebar
           activePanel={activeRightPanel}
           canPopout={canPopoutPanels && Boolean(activeRightPanel)}
