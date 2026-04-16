@@ -1377,10 +1377,10 @@ function MainApp() {
       return
     }
 
-    if (tree?.project?.id === pendingProjectTransitionId && projectUiReady) {
+    if (tree?.project?.id === pendingProjectTransitionId) {
       setPendingProjectTransitionId(null)
     }
-  }, [pendingProjectTransitionId, projectUiReady, selectedProjectId, tree?.project?.id])
+  }, [pendingProjectTransitionId, selectedProjectId, tree?.project?.id])
 
   useEffect(() => {
     if (!selectedProjectId || !tree?.project || tree.project.id !== selectedProjectId) {
@@ -4151,6 +4151,7 @@ function MainApp() {
     handleCanvasContextMenu,
     handleCanvasPointerMove,
     previewViewportRef,
+    preserveViewportCenterForCurrentSize,
     resizeRef,
     stopPanning,
     stopPreviewPan,
@@ -4642,9 +4643,19 @@ function MainApp() {
   const activeLeftPanel = resolvedLeftActivePanel ? panelDefinitions[resolvedLeftActivePanel] : null
   const activeRightPanel = resolvedRightActivePanel ? panelDefinitions[resolvedRightActivePanel] : null
   const windowPanel = panelWindowId ? panelDefinitions[panelWindowId] : null
-  const effectiveLeftSidebarOpen = projectUiReady ? leftSidebarOpen && Boolean(activeLeftPanel) : false
-  const effectiveRightSidebarOpen = projectUiReady ? rightSidebarOpen && Boolean(activeRightPanel) : false
+  const effectiveLeftSidebarOpen = leftSidebarOpen && Boolean(activeLeftPanel)
+  const effectiveRightSidebarOpen = rightSidebarOpen && Boolean(activeRightPanel)
   const canPopoutPanels = isDesktopEnvironment() && !isPanelWindow
+
+  useLayoutEffect(() => {
+    preserveViewportCenterForCurrentSize()
+  }, [
+    effectiveLeftSidebarOpen,
+    effectiveLeftSidebarWidth,
+    effectiveRightSidebarOpen,
+    effectiveRightSidebarWidth,
+    preserveViewportCenterForCurrentSize,
+  ])
 
   async function popoutPanel(panelId) {
     const preservedSelectionIds = effectiveSelectedNodeIds

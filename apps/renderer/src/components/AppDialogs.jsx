@@ -120,6 +120,7 @@ export default function AppDialogs({
         appVersion={appVersion}
         busy={busy}
         desktopClientId={desktopClientId}
+        handleDialogEnter={handleDialogEnter}
         handleServerDisconnectDismiss={handleServerDisconnectDismiss}
         mobileConnectionCount={mobileConnectionCount}
         onCheckForUpdates={onCheckForUpdates}

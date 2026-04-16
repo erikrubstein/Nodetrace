@@ -84,6 +84,36 @@ export default function useWorkspaceInteractions({
     [layout.height, layout.nodes, layout.width],
   )
 
+  const syncViewportSize = useCallback((width, height) => {
+    const previous = viewportSizeRef.current
+    viewportSizeRef.current = { width, height }
+    setViewportSize((current) =>
+      current.width === width && current.height === height ? current : { width, height },
+    )
+
+    if (!previous.width || !previous.height || (previous.width === width && previous.height === height)) {
+      return
+    }
+
+    setTransform((current) => {
+      const worldCenterX = (previous.width / 2 - current.x) / Math.max(0.001, current.scale)
+      const worldCenterY = (previous.height / 2 - current.y) / Math.max(0.001, current.scale)
+      return clampCanvasTransform({
+        ...current,
+        x: width / 2 - worldCenterX * current.scale,
+        y: height / 2 - worldCenterY * current.scale,
+      })
+    })
+  }, [clampCanvasTransform, setTransform])
+
+  const preserveViewportCenterForCurrentSize = useCallback(() => {
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return
+    }
+    syncViewportSize(viewport.clientWidth, viewport.clientHeight)
+  }, [syncViewportSize])
+
   function beginCanvasPointerDown(event) {
     if (
       event.button === 2 &&
@@ -622,28 +652,6 @@ export default function useWorkspaceInteractions({
       return undefined
     }
 
-    function syncViewportSize(width, height) {
-      const previous = viewportSizeRef.current
-      viewportSizeRef.current = { width, height }
-      setViewportSize((current) =>
-        current.width === width && current.height === height ? current : { width, height },
-      )
-
-      if (!previous.width || !previous.height || (previous.width === width && previous.height === height)) {
-        return
-      }
-
-      setTransform((current) => {
-        const worldCenterX = (previous.width / 2 - current.x) / Math.max(0.001, current.scale)
-        const worldCenterY = (previous.height / 2 - current.y) / Math.max(0.001, current.scale)
-        return clampCanvasTransform({
-          ...current,
-          x: width / 2 - worldCenterX * current.scale,
-          y: height / 2 - worldCenterY * current.scale,
-        })
-      })
-    }
-
     syncViewportSize(viewport.clientWidth, viewport.clientHeight)
 
     const observer = new ResizeObserver((entries) => {
@@ -658,7 +666,7 @@ export default function useWorkspaceInteractions({
     return () => {
       observer.disconnect()
     }
-  }, [clampCanvasTransform, setTransform])
+  }, [syncViewportSize])
 
   useEffect(() => {
     const element = previewViewportRef.current
@@ -815,6 +823,7 @@ export default function useWorkspaceInteractions({
     fitCanvasToView,
     handleCanvasPointerMove,
     previewViewportRef,
+    preserveViewportCenterForCurrentSize,
     resizeRef,
     stopPanning,
     stopPreviewPan,

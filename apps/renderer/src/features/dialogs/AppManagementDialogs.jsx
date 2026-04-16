@@ -4,6 +4,7 @@ export default function AppManagementDialogs({
   appDialog,
   appVersion = '0.0.0',
   busy,
+  handleDialogEnter,
   onCheckForUpdates = null,
   onConfirmClearCache = null,
   setAppDialog,
@@ -19,7 +20,12 @@ export default function AppManagementDialogs({
     <>
       {appDialog === 'clear-cache' ? (
         <div className="dialog-backdrop" onClick={() => !busy && setAppDialog(null)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter?.(event, () => void onConfirmClearCache?.(), !busy)}
+            role="dialog"
+          >
             <div className="dialog__title">Reset Cache</div>
             <div className="field-stack">
               <div className="inspector__notice">
@@ -40,7 +46,12 @@ export default function AppManagementDialogs({
 
       {appDialog === 'updates' ? (
         <div className="dialog-backdrop" onClick={() => !busy && setAppDialog(null)} role="presentation">
-          <div className="dialog" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div
+            className="dialog"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => handleDialogEnter?.(event, () => void onCheckForUpdates?.(), !busy)}
+            role="dialog"
+          >
             <div className="dialog__title">Check For Updates</div>
             <div className="field-stack">
               <div className="inspector__notice">
@@ -68,6 +79,7 @@ export default function AppManagementDialogs({
             onConfirm={() => {
               handleServerDisconnectDismiss?.()
             }}
+            onKeyDown={(event) => handleDialogEnter?.(event, () => handleServerDisconnectDismiss?.(), true)}
             title="Server Profile Disconnected"
           >
             <div className="inspector__notice">The server profile for the current project disconnected.</div>
