@@ -50,6 +50,7 @@
 .project-list {
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
   gap: 6px;
   max-height: 320px;
   overflow-y: auto;
@@ -123,7 +124,7 @@
 .project-picker__card-body {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   gap: 10px;
   overflow: hidden;
 }
@@ -183,6 +184,10 @@
   color: var(--text);
 }
 
+.project-picker__search {
+  margin-top: 2px;
+}
+
 .project-picker__card-actions {
   display: flex;
   align-items: center;
@@ -207,24 +212,63 @@
   min-height: 84px;
   display: grid;
   align-content: start;
+  gap: 8px;
   padding-top: 10px;
 }
 
-.project-picker__loading-bar {
-  width: min(260px, 100%);
-  height: 6px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--panel-elevated) 72%, transparent);
+.project-picker__content-slot {
+  min-height: 0;
+  height: 100%;
 }
 
-.project-picker__loading-bar span {
-  display: block;
-  width: 36%;
+.project-picker__content-slot--loading {
+  display: grid;
+}
+
+.project-picker__content-slot--loaded {
+  animation: project-picker-state-in 90ms ease-out;
+}
+
+.project-picker__loading-state--centered {
   height: 100%;
-  border-radius: inherit;
-  background: var(--text-primary);
-  animation: project-picker-loading 1s ease-in-out infinite;
+  min-height: 0;
+  align-content: center;
+  justify-items: center;
+  padding-top: 0;
+}
+
+.project-picker__loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-top-color: var(--text);
+  border-radius: 999px;
+  animation: project-picker-spinner 0.75s linear infinite;
+}
+
+.project-picker__loading-label {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+@keyframes project-picker-state-in {
+  from {
+    opacity: 0.92;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes project-picker-spinner {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes project-picker-loading {
@@ -271,6 +315,9 @@
   border-radius: 4px;
   text-align: left;
   overflow: visible;
+  transition:
+    background-color var(--transition-theme),
+    color var(--transition-theme);
 }
 
 .project-row__main-button {
@@ -332,7 +379,7 @@
 }
 
 .project-row:hover:not(.active) {
-  background: var(--control-hover);
+  background: color-mix(in srgb, var(--control-bg) 96%, var(--text) 4%);
 }
 
 .project-row__status {

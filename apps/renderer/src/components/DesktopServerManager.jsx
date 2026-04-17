@@ -79,14 +79,24 @@ export default function DesktopServerManager({
     resolveInitialProfileId(profiles, focusProfileId, selectedProfileId),
   )
   const [urlPromptState, setUrlPromptState] = useState({ profileId: null, value: '', open: false })
+  const sortedProfiles = useMemo(
+    () =>
+      [...profiles].sort((left, right) =>
+        String(left?.username || left?.baseUrl || '').localeCompare(String(right?.username || right?.baseUrl || ''), undefined, {
+          sensitivity: 'base',
+          numeric: true,
+        }),
+      ),
+    [profiles],
+  )
   const inspectedProfileId =
-    manualInspectedProfileId && profiles.some((profile) => profile.id === manualInspectedProfileId)
+    manualInspectedProfileId && sortedProfiles.some((profile) => profile.id === manualInspectedProfileId)
       ? manualInspectedProfileId
-      : resolveInitialProfileId(profiles, focusProfileId, selectedProfileId)
+      : resolveInitialProfileId(sortedProfiles, focusProfileId, selectedProfileId)
 
   const inspectedProfile = useMemo(
-    () => profiles.find((profile) => profile.id === inspectedProfileId) || null,
-    [inspectedProfileId, profiles],
+    () => sortedProfiles.find((profile) => profile.id === inspectedProfileId) || null,
+    [inspectedProfileId, sortedProfiles],
   )
   const serverUrlDraft =
     urlPromptState.profileId === inspectedProfileId ? urlPromptState.value : inspectedProfile?.baseUrl || ''
@@ -155,6 +165,34 @@ export default function DesktopServerManager({
       return
     }
     setUrlPromptState({ profileId: inspectedProfile.id, value: nextBaseUrl, open: false })
+  }
+
+  function handleManagerEnter(event) {
+    if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) {
+      return
+    }
+    if (event.defaultPrevented) {
+      return
+    }
+    const targetTag = String(event.target?.tagName || '').toLowerCase()
+    if (targetTag === 'textarea') {
+      return
+    }
+    if (serverUrlPromptOpen) {
+      if (busy || !serverUrlChanged || !normalizeBaseUrlInput(serverUrlDraft)) {
+        return
+      }
+      event.preventDefault()
+      void saveServerUrl()
+      return
+    }
+    if (effectiveMode === 'edit') {
+      if (!canSaveProfile) {
+        return
+      }
+      event.preventDefault()
+      void handleSave()
+    }
   }
 
   async function handleSave() {
@@ -267,6 +305,7 @@ export default function DesktopServerManager({
       <div
         className="dialog dialog--wide dialog--frameless project-picker-dialog project-picker-dialog--accounts"
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleManagerEnter}
         role="dialog"
       >
         <div className={`project-picker ${hasProfiles ? 'project-picker--desktop' : 'project-picker--desktop-empty'}`}>
@@ -280,7 +319,7 @@ export default function DesktopServerManager({
               </div>
               <div className="project-picker__card-body project-picker__card-body--top">
                 <div className="project-list project-list--fill">
-                  {profiles.map((profile) => {
+                  {sortedProfiles.map((profile) => {
                     const selected = profile.id === inspectedProfileId
                     const warning = profile.connectionStatus !== 'connected'
                     const warningClass =

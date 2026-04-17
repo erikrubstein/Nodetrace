@@ -24,6 +24,8 @@ export default function AppDialogs({
   desktopEnvironment = false,
   desktopProjectPickerLoading = false,
   desktopProjectPickerProjects = [],
+  desktopProjectPickerProjectsProfileId = null,
+  desktopProjectPickerProjectsOwnerUserId = null,
   desktopServerProfiles = [],
   deleteNode,
   deleteAccount,
@@ -61,6 +63,7 @@ export default function AppDialogs({
   renameProject,
   logoutUser,
   saveProjectOpenAiKey,
+  activeDesktopServerProfileId = null,
   selectedNode,
   selectedDesktopServerProfileId = null,
   selectedProjectId,
@@ -99,6 +102,7 @@ export default function AppDialogs({
 }) {
   const [openProjectFilter, setOpenProjectFilter] = useState(null)
   const [connectedAccountFilter, setConnectedAccountFilter] = useState(false)
+  const [openProjectSearch, setOpenProjectSearch] = useState('')
 
   const importableProjects = useMemo(
     () =>
@@ -159,6 +163,8 @@ export default function AppDialogs({
         desktopEnvironment={desktopEnvironment}
         desktopProjectPickerLoading={desktopProjectPickerLoading}
         desktopProjectPickerProjects={desktopProjectPickerProjects}
+        desktopProjectPickerProjectsProfileId={desktopProjectPickerProjectsProfileId}
+        desktopProjectPickerProjectsOwnerUserId={desktopProjectPickerProjectsOwnerUserId}
         desktopServerProfiles={desktopServerProfiles}
         error={error}
         exportFileName={exportFileName}
@@ -173,11 +179,13 @@ export default function AppDialogs({
         onOpenManageAccounts={onOpenManageAccounts}
         onSelectDesktopServerProfile={onSelectDesktopServerProfile}
         openProjectFilter={openProjectFilter}
+        openProjectSearch={openProjectSearch}
         projectApiKeyInput={projectApiKeyInput}
         projectName={projectName}
         projects={projects}
         renameProject={renameProject}
         saveProjectOpenAiKey={saveProjectOpenAiKey}
+        activeDesktopServerProfileId={activeDesktopServerProfileId}
         selectedDesktopServerProfileId={selectedDesktopServerProfileId}
         selectedProjectId={selectedProjectId}
         setConnectedAccountFilter={setConnectedAccountFilter}
@@ -185,6 +193,7 @@ export default function AppDialogs({
         setExportFileName={setExportFileName}
         setImportProjectName={setImportProjectName}
         setOpenProjectFilter={setOpenProjectFilter}
+        setOpenProjectSearch={setOpenProjectSearch}
         setProjectApiKeyInput={setProjectApiKeyInput}
         setProjectName={setProjectName}
         setShowProjectDialog={setShowProjectDialog}

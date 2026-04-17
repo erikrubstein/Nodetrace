@@ -127,9 +127,11 @@ function MainApp() {
   const [desktopAccountManagerFocusId, setDesktopAccountManagerFocusId] = useState(null)
   const [desktopServerDialogReturnTarget, setDesktopServerDialogReturnTarget] = useState(null)
   const [projects, setProjects] = useState([])
-  const [projectListLoading, setProjectListLoading] = useState(false)
+  const [, setProjectListLoading] = useState(false)
   const [projectPickerProfileId, setProjectPickerProfileId] = useState(null)
   const [projectPickerProjects, setProjectPickerProjects] = useState([])
+  const [projectPickerProjectsProfileId, setProjectPickerProjectsProfileId] = useState(null)
+  const [projectPickerProjectsOwnerUserId, setProjectPickerProjectsOwnerUserId] = useState(null)
   const [projectPickerLoading, setProjectPickerLoading] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [manualProjectSelectionRequired, setManualProjectSelectionRequired] = useState(false)
@@ -603,11 +605,14 @@ function MainApp() {
     if (!selectedProfile || selectedProfile.connectionStatus !== 'connected') {
       setProjectPickerLoading(false)
       setProjectPickerProjects([])
+      setProjectPickerProjectsProfileId(null)
+      setProjectPickerProjectsOwnerUserId(null)
       return
     }
 
     const requestSequence = ++projectPickerRequestSequenceRef.current
-    setProjectPickerProjects([])
+    const requestProfileId = projectPickerProfileId
+    const requestProfileOwnerUserId = selectedProfile.userId || null
     setProjectPickerLoading(true)
     listDesktopProjectsForProfile(projectPickerProfileId)
       .then((projectList) => {
@@ -615,12 +620,16 @@ function MainApp() {
           return
         }
         setProjectPickerProjects(Array.isArray(projectList) ? projectList : [])
+        setProjectPickerProjectsProfileId(requestProfileId)
+        setProjectPickerProjectsOwnerUserId(requestProfileOwnerUserId)
       })
       .catch((loadError) => {
         if (requestSequence !== projectPickerRequestSequenceRef.current) {
           return
         }
         setProjectPickerProjects([])
+        setProjectPickerProjectsProfileId(null)
+        setProjectPickerProjectsOwnerUserId(null)
         if (String(loadError.message || '').trim() !== DESKTOP_CONNECTION_ERROR_MESSAGE) {
           setError(loadError.message || 'Unable to load projects for that server profile.')
         }
@@ -1459,6 +1468,7 @@ function MainApp() {
 
   const loadCurrentUser = useCallback(async () => {
     const hasOpenProject = Boolean(selectedProjectId && tree?.project)
+    const pendingTransitionProjectId = String(pendingProjectTransitionId || '').trim() || null
 
     if (desktopEnvironment && !desktopServerReady) {
       return
@@ -1522,7 +1532,7 @@ function MainApp() {
 
     if (shouldResetDesktopWorkspace) {
       setCurrentUser(null)
-      setSelectedProjectId(null)
+      setSelectedProjectId(pendingTransitionProjectId)
       setTree(null)
       setSelectedNodeId(null)
       setProjectUiReady(false)
@@ -1560,6 +1570,7 @@ function MainApp() {
     handleAuthLost,
     selectedProjectId,
     effectiveDesktopServerConnectionStatus,
+    pendingProjectTransitionId,
     selectedDesktopServerProfileId,
     showProjectDialog,
     serverDisconnectDialogOpen,
@@ -1626,8 +1637,9 @@ function MainApp() {
     setPendingProjectTransitionId,
     setProjectListLoading,
     setProjectPickerLoading,
+    selectedProjectId,
+    projectPickerProfileId,
     setProjectPickerProfileId,
-    setProjectPickerProjects,
     setProjects,
     setSelectedProjectId,
     setSessionDialogOpen,
@@ -1635,6 +1647,7 @@ function MainApp() {
     setShowProjectDialog,
     setStatus,
     setUpdateStatus,
+    showProjectDialog,
     closeDisconnectedProject,
   })
 
@@ -4705,6 +4718,8 @@ function MainApp() {
   }
 
   function renderAppDialogs() {
+    const effectiveShowProjectDialog = desktopServerDialogOpen ? null : showProjectDialog
+
     return (
       <AppDialogs
         accountDialog={accountDialog}
@@ -4727,8 +4742,10 @@ function MainApp() {
         currentUser={currentUser}
         desktopEnvironment={desktopEnvironment}
         desktopServerProfiles={desktopServerState.profiles}
-        desktopProjectPickerLoading={desktopEnvironment ? projectPickerLoading : projectListLoading}
         desktopProjectPickerProjects={desktopEnvironment ? projectPickerProjects : projects}
+        desktopProjectPickerLoading={desktopEnvironment ? projectPickerLoading : false}
+        desktopProjectPickerProjectsProfileId={desktopEnvironment ? projectPickerProjectsProfileId : null}
+        desktopProjectPickerProjectsOwnerUserId={desktopEnvironment ? projectPickerProjectsOwnerUserId : null}
         deleteNode={deleteNode}
         deleteAccount={deleteAccount}
         deleteTemplate={deleteTemplate}
@@ -4765,6 +4782,7 @@ function MainApp() {
         renameProject={renameProject}
         logoutUser={() => void logoutUser()}
         saveProjectOpenAiKey={saveProjectOpenAiKey}
+        activeDesktopServerProfileId={desktopEnvironment ? selectedDesktopServerProfile?.id || null : null}
         selectedNode={selectedNode}
         selectedDesktopServerProfileId={projectPickerProfileId}
         selectedProjectId={selectedProjectId}
@@ -4799,7 +4817,7 @@ function MainApp() {
         }}
         setTemplateDialog={setTemplateDialog}
         setMergePhotoConfirmation={setMergePhotoConfirmation}
-        showProjectDialog={showProjectDialog}
+        showProjectDialog={effectiveShowProjectDialog}
         handleServerDisconnectDismiss={dismissServerDisconnectDialog}
         submitNewNode={submitNewNode}
         submitTemplateDialog={submitTemplateDialog}

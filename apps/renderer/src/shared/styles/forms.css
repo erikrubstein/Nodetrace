@@ -90,6 +90,21 @@ button:disabled {
   background: var(--control-bg);
 }
 
+.ghost-button:hover:not(:disabled),
+.menu-item:hover:not(:disabled),
+.project-row:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--control-bg) 96%, var(--text) 4%);
+}
+
+.ghost-button:focus,
+.ghost-button:focus-visible,
+.menu-item:focus,
+.menu-item:focus-visible,
+.project-row:focus,
+.project-row:focus-visible {
+  background: color-mix(in srgb, var(--control-bg) 92%, var(--text) 8%);
+}
+
 .primary-button {
   background: #111111;
   color: #ffffff;

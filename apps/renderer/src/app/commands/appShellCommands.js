@@ -29,8 +29,9 @@ export function useAppShellCommands({
   setPendingProjectTransitionId,
   setProjectListLoading,
   setProjectPickerLoading,
+  selectedProjectId,
+  projectPickerProfileId,
   setProjectPickerProfileId,
-  setProjectPickerProjects,
   setProjects,
   setSelectedProjectId,
   setSessionDialogOpen,
@@ -60,6 +61,7 @@ export function useAppShellCommands({
     if (desktopEnvironment) {
       if (showProjectDialog === 'open') {
         setDesktopServerDialogReturnTarget('open')
+        setShowProjectDialog(null)
       } else {
         setDesktopServerDialogReturnTarget(null)
       }
@@ -80,6 +82,7 @@ export function useAppShellCommands({
     setDesktopServerDialogOpen,
     setDesktopServerDialogReturnTarget,
     setError,
+    setShowProjectDialog,
     showProjectDialog,
   ])
 
@@ -252,17 +255,13 @@ export function useAppShellCommands({
 
   const browseProjectPickerProfile = useCallback((id) => {
     const normalizedId = String(id || '').trim() || null
+    if (projectPickerProfileId === normalizedId) {
+      return
+    }
     setError('')
-    setProjectPickerProjects([])
     setProjectPickerLoading(Boolean(normalizedId))
-    setProjectPickerProfileId((current) => {
-      if (current === normalizedId) {
-        setProjectPickerLoading(false)
-        return current
-      }
-      return normalizedId
-    })
-  }, [setError, setProjectPickerLoading, setProjectPickerProfileId, setProjectPickerProjects])
+    setProjectPickerProfileId(normalizedId)
+  }, [projectPickerProfileId, setError, setProjectPickerLoading, setProjectPickerProfileId])
 
   const openDesktopProjectFromPicker = useCallback(async (profileId, projectId) => {
     const normalizedProfileId = String(profileId || '').trim()
@@ -271,8 +270,14 @@ export function useAppShellCommands({
       return
     }
 
+    const switchingProfiles = desktopServerState.selectedProfileId !== normalizedProfileId
+    const reopeningSameProjectUnderDifferentProfile = switchingProfiles && selectedProjectId === normalizedProjectId
+
     setBusy(true)
     setError('')
+    if (reopeningSameProjectUnderDifferentProfile) {
+      setSelectedProjectId(null)
+    }
     beginProjectTransition(normalizedProjectId)
     try {
       setManualProjectSelectionRequired(false)
@@ -296,6 +301,7 @@ export function useAppShellCommands({
   }, [
     beginProjectTransition,
     desktopServerState.selectedProfileId,
+    selectedProjectId,
     setBusy,
     setDesktopServerState,
     setError,

@@ -11,6 +11,8 @@ export default function ProjectDialogs({
   desktopEnvironment = false,
   desktopProjectPickerLoading = false,
   desktopProjectPickerProjects = [],
+  desktopProjectPickerProjectsProfileId = null,
+  desktopProjectPickerProjectsOwnerUserId = null,
   desktopServerProfiles = [],
   error,
   exportFileName,
@@ -25,7 +27,9 @@ export default function ProjectDialogs({
   onOpenDesktopProject = null,
   onSelectDesktopServerProfile = null,
   openProjectFilter,
+  openProjectSearch = '',
   setOpenProjectFilter,
+  setOpenProjectSearch,
   connectedAccountFilter,
   setConnectedAccountFilter,
   projectApiKeyInput,
@@ -33,6 +37,7 @@ export default function ProjectDialogs({
   projects,
   renameProject,
   saveProjectOpenAiKey,
+  activeDesktopServerProfileId = null,
   selectedDesktopServerProfileId = null,
   selectedProjectId,
   setDeleteProjectText,
@@ -50,7 +55,7 @@ export default function ProjectDialogs({
   const openProjectSource = desktopEnvironment ? desktopProjectPickerProjects : projects
   const selectedDesktopServerProfile =
     desktopServerProfiles.find((profile) => profile.id === selectedDesktopServerProfileId) || null
-  const openProjectUserId = desktopEnvironment ? selectedDesktopServerProfile?.userId || null : currentUser?.id || null
+  const openProjectUserId = desktopEnvironment ? desktopProjectPickerProjectsOwnerUserId || null : currentUser?.id || null
   const canOpenProjectsForSelectedProfile = !desktopEnvironment || selectedDesktopServerProfile?.connectionStatus === 'connected'
   const suppressOpenProjectError =
     showProjectDialog === 'open' &&
@@ -64,11 +69,21 @@ export default function ProjectDialogs({
       numeric: true,
     }),
   )
-  const visibleDesktopAccounts = desktopServerProfiles.filter((profile) =>
-    connectedAccountFilter ? profile.connectionStatus === 'connected' : true,
-  )
+  const normalizedProjectSearch = String(openProjectSearch || '').trim().toLowerCase()
+  const visibleDesktopAccounts = [...desktopServerProfiles]
+    .sort((left, right) =>
+      String(left?.username || left?.baseUrl || '').localeCompare(String(right?.username || right?.baseUrl || ''), undefined, {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    )
+    .filter((profile) => (connectedAccountFilter ? profile.connectionStatus === 'connected' : true))
   const visibleProjects = sortedProjects.filter((project) => {
     const owned = Boolean(project?.ownerUserId && project.ownerUserId === openProjectUserId)
+    const nameMatches = !normalizedProjectSearch || String(project?.name || '').toLowerCase().includes(normalizedProjectSearch)
+    if (!nameMatches) {
+      return false
+    }
     if (openProjectFilter === 'owned') {
       return owned
     }
@@ -77,13 +92,117 @@ export default function ProjectDialogs({
     }
     return true
   })
-
+  const showActiveProjectSelection =
+    !desktopEnvironment || (
+      Boolean(activeDesktopServerProfileId) &&
+      activeDesktopServerProfileId === desktopProjectPickerProjectsProfileId
+    )
   function toggleOpenProjectFilter(filterKey) {
     setOpenProjectFilter((current) => (current === filterKey ? null : filterKey))
   }
 
   function openDesktopAccountManager(profileId) {
     onOpenManageAccounts?.(profileId)
+  }
+
+  function renderProjectPickerContent(mode) {
+    if (mode === 'needs-profile') {
+      return <div className="inspector__notice">Add a server profile before opening projects.</div>
+    }
+
+    if (mode === 'disconnected') {
+      return (
+        <div className="project-picker__state-stack">
+          <div className="inspector__notice">
+            {selectedDesktopServerProfile?.connectionStatus === 'invalid_login' ? (
+              <>
+                <strong>{selectedDesktopServerProfile?.username || 'This server profile'}</strong> has invalid login credentials. Re-authenticate or fix it before opening projects.
+              </>
+            ) : (
+              <>
+                <strong>{selectedDesktopServerProfile?.username || 'This server profile'}</strong> is disconnected. Reconnect the server to view its projects.
+              </>
+            )}
+          </div>
+          <div className="project-picker__state-actions">
+            <button className="ghost-button" disabled={busy} onClick={() => void openDesktopAccountManager(selectedDesktopServerProfile?.id)} type="button">
+              Manage Server Profile
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    if (mode === 'projects') {
+      return (
+        <div className="project-picker__content-slot project-picker__content-slot--loaded">
+          <div className="project-list project-list--fill">
+            {visibleProjects.map((project) => {
+              const ownedProject = Boolean(project?.ownerUserId && project.ownerUserId === openProjectUserId)
+              const publicProject = Boolean(project?.isPublic)
+              const showPublicIndicator = publicProject && !ownedProject
+              const collaboratorProject = !ownedProject && !publicProject
+              return (
+                <button
+                  key={project.id}
+                  className={`project-row ${showActiveProjectSelection && project.id === selectedProjectId ? 'active' : ''}`}
+                  onClick={() => {
+                    if (desktopEnvironment) {
+                      void onOpenDesktopProject?.(desktopProjectPickerProjectsProfileId, project.id)
+                      return
+                    }
+                    setShowProjectId(project.id)
+                    setShowProjectDialog(null)
+                  }}
+                  disabled={!canOpenProjectsForSelectedProfile}
+                  type="button"
+                >
+                  <span className="project-row__name">
+                    <span>{project.name}</span>
+                    {showPublicIndicator ? (
+                      <span className="icon-button-wrap project-row__icon-wrap project-row__collaborator-indicator">
+                        <span className="project-row__icon project-row__icon-button" aria-hidden="true">
+                          <GlobeIcon />
+                        </span>
+                        <span aria-hidden="true" className="icon-tooltip project-row__icon-tooltip">
+                          {`Owner: ${project.ownerUsername || 'Unknown'}`}
+                        </span>
+                      </span>
+                    ) : collaboratorProject ? (
+                      <span className="icon-button-wrap project-row__icon-wrap project-row__collaborator-indicator">
+                        <span className="project-row__icon project-row__icon-button" aria-hidden="true">
+                          <UsersIcon />
+                        </span>
+                        <span aria-hidden="true" className="icon-tooltip project-row__icon-tooltip">
+                          {`Owner: ${project.ownerUsername || 'Unknown'}`}
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
+                  <small>{project.node_count} nodes</small>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )
+    }
+
+    if (mode === 'pending') {
+      return <div className="project-picker__content-slot" />
+    }
+
+    return (
+      <div className="project-picker__content-slot project-picker__content-slot--loaded">
+        <div className="inspector__notice">
+          {openProjectSource.length
+            ? normalizedProjectSearch
+              ? 'No projects match the current search.'
+              : 'No projects match the selected filter.'
+            : 'No projects available on this server profile yet.'}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -261,86 +380,26 @@ export default function ProjectDialogs({
                     </button>
                   </div>
                   <div className="project-picker__divider" />
-                  {desktopEnvironment && !selectedDesktopServerProfile ? (
-                    <div className="inspector__notice">Add a server profile before opening projects.</div>
-                  ) : desktopEnvironment && selectedDesktopServerProfile?.connectionStatus !== 'connected' ? (
-                    <div className="project-picker__state-stack">
-                      <div className="inspector__notice">
-                        {selectedDesktopServerProfile?.connectionStatus === 'invalid_login' ? (
-                          <>
-                            <strong>{selectedDesktopServerProfile?.username || 'This server profile'}</strong> has invalid login credentials. Re-authenticate or fix it before opening projects.
-                          </>
-                        ) : (
-                          <>
-                            <strong>{selectedDesktopServerProfile?.username || 'This server profile'}</strong> is disconnected. Reconnect the server to view its projects.
-                          </>
-                        )}
-                      </div>
-                      <div className="project-picker__state-actions">
-                        <button className="ghost-button" disabled={busy} onClick={() => void openDesktopAccountManager(selectedDesktopServerProfile?.id)} type="button">
-                          Manage Server Profile
-                        </button>
-                      </div>
-                    </div>
-                  ) : desktopProjectPickerLoading ? (
-                    <div className="project-picker__loading-state" aria-live="polite">
-                      <div className="project-picker__loading-bar" aria-hidden="true">
-                        <span />
-                      </div>
-                    </div>
-                  ) : visibleProjects.length ? (
-                    <div className="project-list project-list--fill">
-                      {visibleProjects.map((project) => {
-                        const ownedProject = Boolean(project?.ownerUserId && project.ownerUserId === openProjectUserId)
-                        const publicProject = Boolean(project?.isPublic)
-                        const showPublicIndicator = publicProject && !ownedProject
-                        const collaboratorProject = !ownedProject && !publicProject
-                        return (
-                          <button
-                            key={project.id}
-                            className={`project-row ${project.id === selectedProjectId ? 'active' : ''}`}
-                            onClick={() => {
-                              if (desktopEnvironment) {
-                                void onOpenDesktopProject?.(selectedDesktopServerProfile?.id, project.id)
-                                return
-                              }
-                              setShowProjectId(project.id)
-                              setShowProjectDialog(null)
-                            }}
-                            disabled={!canOpenProjectsForSelectedProfile}
-                            type="button"
-                          >
-                            <span className="project-row__name">
-                              <span>{project.name}</span>
-                              {showPublicIndicator ? (
-                                <span className="icon-button-wrap project-row__icon-wrap project-row__collaborator-indicator">
-                                  <span className="project-row__icon project-row__icon-button" aria-hidden="true">
-                                    <GlobeIcon />
-                                  </span>
-                                  <span aria-hidden="true" className="icon-tooltip project-row__icon-tooltip">
-                                    {`Owner: ${project.ownerUsername || 'Unknown'}`}
-                                  </span>
-                                </span>
-                              ) : collaboratorProject ? (
-                                <span className="icon-button-wrap project-row__icon-wrap project-row__collaborator-indicator">
-                                  <span className="project-row__icon project-row__icon-button" aria-hidden="true">
-                                    <UsersIcon />
-                                  </span>
-                                  <span aria-hidden="true" className="icon-tooltip project-row__icon-tooltip">
-                                    {`Owner: ${project.ownerUsername || 'Unknown'}`}
-                                  </span>
-                                </span>
-                              ) : null}
-                            </span>
-                            <small>{project.node_count} nodes</small>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div className="inspector__notice">
-                      {openProjectSource.length ? 'No projects match the selected filter.' : 'No projects available on this server profile yet.'}
-                    </div>
+                  <input
+                    autoFocus={!desktopEnvironment}
+                    className="project-picker__search"
+                    disabled={busy || (desktopEnvironment && !canOpenProjectsForSelectedProfile)}
+                    onChange={(event) => setOpenProjectSearch(event.target.value)}
+                    placeholder="Search projects"
+                    type="text"
+                    value={openProjectSearch}
+                  />
+                  <div className="project-picker__divider" />
+                  {renderProjectPickerContent(
+                    desktopEnvironment && !selectedDesktopServerProfile
+                      ? 'needs-profile'
+                      : desktopEnvironment && selectedDesktopServerProfile?.connectionStatus !== 'connected'
+                        ? 'disconnected'
+                        : desktopEnvironment && desktopProjectPickerLoading && !visibleProjects.length
+                          ? 'pending'
+                        : visibleProjects.length
+                            ? 'projects'
+                            : 'empty',
                   )}
                   {canCloseProjectDialog ? (
                     <div className="project-picker__card-actions">
