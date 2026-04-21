@@ -2400,10 +2400,11 @@ function MainApp() {
     editForm,
     editTargetId,
     editTargetNode,
+    hasDirtyDraft,
     nameInputRef,
     saveNodeDraft,
     setEditForm,
-    setEditTargetId,
+    syncEditForm,
   } = useNodeEditing({
     applyNodeUpdate,
     patchNodeRequest,
@@ -2420,22 +2421,16 @@ function MainApp() {
 
   useEffect(() => {
     if (!selectedNode) {
-      setEditTargetId(null)
-      setEditForm({ name: '', notes: '', tags: [] })
+      syncEditForm(null)
       return
     }
 
-    if (selectedNode.id === editTargetId) {
+    if (selectedNode.id === editTargetId && hasDirtyDraft) {
       return
     }
 
-    setEditTargetId(selectedNode.id)
-    setEditForm({
-      name: selectedNode.name,
-      notes: selectedNode.notes || '',
-      tags: selectedNode.tags || [],
-    })
-  }, [editTargetId, selectedNode, setEditForm, setEditTargetId])
+    syncEditForm(selectedNode)
+  }, [editTargetId, hasDirtyDraft, selectedNode, syncEditForm])
 
   useEffect(() => {
     function closeContextMenu(event) {

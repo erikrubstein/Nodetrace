@@ -33,8 +33,10 @@ export default function useNodeEditing({
   const nameInputRef = useRef(null)
   const nodeSaveSequenceRef = useRef(new Map())
   const skipNextAutoSaveSignatureRef = useRef(null)
+  const syncedDraftSignatureRef = useRef('')
   const [editTargetId, setEditTargetId] = useState(null)
   const [editForm, setEditForm] = useState({ name: '', notes: '', tags: [] })
+  const [hasDirtyDraft, setHasDirtyDraft] = useState(false)
 
   const editTargetNode = tree?.nodes.find((node) => node.id === editTargetId) || null
 
@@ -48,6 +50,35 @@ export default function useNodeEditing({
       tags: normalizeTags(draft.tags),
     })
   }, [])
+
+  const syncEditForm = useCallback((node) => {
+    if (!node) {
+      syncedDraftSignatureRef.current = ''
+      setEditTargetId(null)
+      setEditForm({ name: '', notes: '', tags: [] })
+      setHasDirtyDraft(false)
+      return
+    }
+
+    const nextDraft = {
+      name: node.name,
+      notes: node.notes || '',
+      tags: node.tags || [],
+    }
+    syncedDraftSignatureRef.current = buildDraftSignature(nextDraft)
+    setEditTargetId(node.id)
+    setEditForm(nextDraft)
+    setHasDirtyDraft(false)
+  }, [buildDraftSignature])
+
+  const updateEditForm = useCallback((nextValue) => {
+    setEditForm((current) => {
+      const resolvedNextValue = typeof nextValue === 'function' ? nextValue(current) : nextValue
+      const nextSignature = buildDraftSignature(resolvedNextValue)
+      setHasDirtyDraft(nextSignature !== syncedDraftSignatureRef.current)
+      return resolvedNextValue
+    })
+  }, [buildDraftSignature])
 
   const saveNodeDraft = useCallback(
     async (node, draft, options = {}) => {
@@ -89,6 +120,8 @@ export default function useNodeEditing({
         if (nodeSaveSequenceRef.current.get(node.id) === saveSequence) {
           applyNodeUpdate(updatedNode)
         }
+        syncedDraftSignatureRef.current = buildDraftSignature(after)
+        setHasDirtyDraft(false)
         pushHistory({
           undo: async () => {
             await patchNodeRequest(node.id, before)
@@ -110,6 +143,9 @@ export default function useNodeEditing({
     if (!selectedNode || !editTargetNode || selectedNode.id !== editTargetId) {
       return undefined
     }
+    if (!hasDirtyDraft) {
+      return undefined
+    }
 
     const draftSignature = buildDraftSignature(editForm)
     if (skipNextAutoSaveSignatureRef.current === draftSignature) {
@@ -124,15 +160,17 @@ export default function useNodeEditing({
     return () => {
       window.clearTimeout(timer)
     }
-  }, [buildDraftSignature, editForm, editTargetId, editTargetNode, saveNodeDraft, selectedNode])
+  }, [buildDraftSignature, editForm, editTargetId, editTargetNode, hasDirtyDraft, saveNodeDraft, selectedNode])
 
   return {
     editForm,
     editTargetId,
     editTargetNode,
+    hasDirtyDraft,
     nameInputRef,
     saveNodeDraft,
-    setEditForm,
+    setEditForm: updateEditForm,
     setEditTargetId,
+    syncEditForm,
   }
 }
