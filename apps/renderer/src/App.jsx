@@ -2125,7 +2125,7 @@ function MainApp() {
       }
     }
 
-    const refreshIntervalMs = desktopEnvironment ? 2500 : 10000
+    const refreshIntervalMs = 2000
 
     void refreshPresence()
     const intervalHandle = window.setInterval(() => {
