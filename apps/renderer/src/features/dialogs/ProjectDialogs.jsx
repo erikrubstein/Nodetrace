@@ -336,22 +336,23 @@ export default function ProjectDialogs({
                               ? 'project-row__warning-inline--invalid'
                               : 'project-row__warning-inline--disconnected'
                           return (
-                            <div
+                            <button
                               key={profile.id}
                               className={`project-row project-row--account ${selected ? 'active' : ''} ${hasWarning ? 'project-row--warning' : ''}`}
+                              disabled={busy}
+                              onClick={() => void onSelectDesktopServerProfile?.(profile.id)}
+                              type="button"
                             >
-                              <button className="project-row__main-button" disabled={busy} onClick={() => void onSelectDesktopServerProfile?.(profile.id)} type="button">
-                                <span className="project-row__account-meta">
-                                  <span>{profile.username || profile.baseUrl || 'Server Profile'}</span>
-                                  <small>{profile.baseUrl}</small>
-                                </span>
-                              </button>
+                              <span className="project-row__account-meta">
+                                <span>{profile.username || profile.baseUrl || 'Server Profile'}</span>
+                                <small>{profile.baseUrl}</small>
+                              </span>
                               {hasWarning ? (
                                 <span className={`project-row__warning-inline ${warningClass}`} aria-hidden="true">
                                   <WarningIcon />
                                 </span>
                               ) : null}
-                            </div>
+                            </button>
                           )
                         })
                       ) : (
