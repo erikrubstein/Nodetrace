@@ -202,6 +202,7 @@ export function useAppShellCommands({
     setBusy(true)
     setError('')
     try {
+      const creatingFirstProfile = !(desktopServerState?.profiles || []).length
       const nextState = await createDesktopServerProfile(payload)
       if (nextState) {
         setDesktopServerState(nextState)
@@ -223,6 +224,12 @@ export function useAppShellCommands({
             }
           }
         }
+        if (creatingFirstProfile) {
+          setDesktopAccountManagerFocusId(null)
+          setDesktopServerDialogOpen(false)
+          setDesktopServerDialogReturnTarget(null)
+          setShowProjectDialog('open')
+        }
       }
       return nextState || true
     } catch (submitError) {
@@ -231,7 +238,18 @@ export function useAppShellCommands({
     } finally {
       setBusy(false)
     }
-  }, [onCreateServerProfile, setBusy, setDesktopAccountManagerFocusId, setDesktopServerState, setError, setProjectPickerProfileId])
+  }, [
+    desktopServerState,
+    onCreateServerProfile,
+    setBusy,
+    setDesktopAccountManagerFocusId,
+    setDesktopServerDialogOpen,
+    setDesktopServerDialogReturnTarget,
+    setDesktopServerState,
+    setError,
+    setProjectPickerProfileId,
+    setShowProjectDialog,
+  ])
 
   const updateServerProfile = useCallback(async (id, payload) => {
     if (typeof onUpdateServerProfile === 'function') {

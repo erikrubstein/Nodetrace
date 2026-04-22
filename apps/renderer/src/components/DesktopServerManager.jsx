@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import IconButton from './IconButton'
 import { PencilIcon, PlusIcon, TrashIcon, WarningIcon } from './icons'
+import { resolvePublicAssetUrl } from '../lib/runtimePaths'
+
+const nodetraceLogoUrl = resolvePublicAssetUrl('nodetrace.svg')
 
 function createEmptyEditor() {
   return {
@@ -309,11 +312,17 @@ export default function DesktopServerManager({
       ) : null}
 
       <div
-        className="dialog dialog--wide dialog--frameless project-picker-dialog project-picker-dialog--accounts"
+        className={`dialog dialog--wide dialog--frameless project-picker-dialog project-picker-dialog--accounts ${!hasProfiles ? 'project-picker-dialog--accounts-empty' : ''}`.trim()}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleManagerEnter}
         role="dialog"
       >
+        {!hasProfiles ? (
+          <div className="project-picker__brand desktop-account-manager__brand">
+            <img alt="Nodetrace" className="project-picker__brand-logo" src={nodetraceLogoUrl} />
+            <div className="project-picker__brand-title">Nodetrace</div>
+          </div>
+        ) : null}
         <div className={`project-picker ${hasProfiles ? 'project-picker--desktop' : 'project-picker--desktop-empty'}`}>
           {hasProfiles ? (
             <div className="project-picker__card project-picker__card--servers">
@@ -365,33 +374,30 @@ export default function DesktopServerManager({
             </div>
           ) : null}
 
-          <div className="project-picker__card project-picker__card--projects">
-            <div className="project-picker__card-header">
-              <div className="project-picker__section-title">
-                {!hasProfiles
-                  ? 'Add Your First Server Profile'
+          <div className={`project-picker__card project-picker__card--projects ${!hasProfiles ? 'project-picker__card--empty-account' : ''}`.trim()}>
+              <div className="project-picker__card-header">
+                <div className="project-picker__section-title">
+                  {!hasProfiles
+                  ? 'Create Server Profile'
                   : effectiveMode === 'edit'
                     ? (editor.id ? 'Edit Server Profile' : 'Add Server Profile')
                     : 'Server Profile Details'}
-              </div>
-              <IconButton
-                className="tool-button"
-                disabled={busy || !inspectedProfile}
-                onClick={() => void onDeleteProfile?.(inspectedProfile?.id)}
-                tooltip="Remove Saved Server Profile"
-              >
-                <TrashIcon />
-              </IconButton>
+                </div>
+              {hasProfiles ? (
+                <IconButton
+                  className="tool-button"
+                  disabled={busy || !inspectedProfile}
+                  onClick={() => void onDeleteProfile?.(inspectedProfile?.id)}
+                  tooltip="Remove Saved Server Profile"
+                >
+                  <TrashIcon />
+                </IconButton>
+              ) : null}
             </div>
 
             <div className="project-picker__card-body project-picker__card-body--details">
               {effectiveMode === 'edit' ? (
                 <div className="desktop-account-manager__editor desktop-account-manager__panel">
-                  {!hasProfiles ? (
-                    <div className="inspector__notice">
-                      Add your first server profile to connect this desktop client to a Nodetrace server.
-                    </div>
-                  ) : null}
                   <div className="field-stack auth-fields">
                     <label>
                       <span>Server URL</span>
