@@ -14,7 +14,7 @@ extraMetadata:
   main: apps/desktop/launcher.cjs
 mac:
   category: public.app-category.graphics-design
-  icon: build/mac/nodetrace_icon/nodetrace.icon
+  icon: build/mac/app-icon.icns
   identity: "-"
   target:
     - dmg
