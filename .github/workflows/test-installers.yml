@@ -21,10 +21,12 @@ jobs:
             label: Windows
             build_command: npx electron-builder --win nsis --publish never
             artifact_name: nodetrace-windows-installer
+            artifact_path: release/*.exe
           - os: macos-latest
             label: macOS
             build_command: npx electron-builder --mac dmg --publish never
             artifact_name: nodetrace-macos-installer
+            artifact_path: release/*.dmg
 
     defaults:
       run:
@@ -52,6 +54,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: |
-            release/*
+          path: ${{ matrix.artifact_path }}
           if-no-files-found: error
