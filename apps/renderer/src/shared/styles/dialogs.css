@@ -431,6 +431,10 @@
   color: #d6b768;
 }
 
+.project-row__warning-inline--connecting {
+  color: var(--muted);
+}
+
 .project-row__warning-inline--disconnected {
   color: var(--danger);
 }
@@ -439,9 +443,25 @@
   color: var(--muted);
 }
 
+.project-row__status--connecting {
+  color: var(--muted);
+}
+
 .project-row__status--invalid_login,
 .project-row__status--disconnected {
   color: var(--danger);
+}
+
+.desktop-account-manager__server-edit-button + .icon-tooltip {
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: auto;
+  right: 0;
+  transform: translateY(-2px);
+}
+
+.icon-button-wrap:hover .desktop-account-manager__server-edit-button + .icon-tooltip {
+  transform: translateY(0);
 }
 
 .project-row__icon {

@@ -100,6 +100,7 @@
 }
 
 .desktop-account-manager__panel {
+  position: relative;
   min-height: 0;
   height: 100%;
   overflow: visible;
@@ -187,6 +188,10 @@
 
 .desktop-account-manager__status--connected strong {
   color: #71c087;
+}
+
+.desktop-account-manager__status--connecting strong {
+  color: var(--muted);
 }
 
 .desktop-account-manager__status--invalid_login strong {

@@ -74,7 +74,7 @@ export function registerIpcHandlers({
     return { ok: true }
   })
   ipcMain.handle('desktop:get-server-state', async () => {
-    await refreshAndBroadcastDesktopServerState()
+    void refreshAndBroadcastDesktopServerState().catch(() => {})
     return getDesktopServerState()
   })
   ipcMain.handle('desktop:create-server-profile', (_event, profile) => upsertServerProfile(null, profile))

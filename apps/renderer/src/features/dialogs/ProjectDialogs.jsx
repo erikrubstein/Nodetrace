@@ -136,6 +136,19 @@ export default function ProjectDialogs({
       )
     }
 
+    if (mode === 'connecting') {
+      return (
+        <div className="project-picker__state-stack">
+          <div className="project-picker__loading-state project-picker__loading-state--centered">
+            <div className="project-picker__loading-spinner" aria-hidden="true" />
+            <div className="project-picker__loading-label">
+              Connecting to <strong>{selectedDesktopServerProfile?.username || 'server profile'}</strong>...
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     if (mode === 'projects') {
       return (
         <div className="project-picker__content-slot project-picker__content-slot--loaded">
@@ -332,7 +345,9 @@ export default function ProjectDialogs({
                           const selected = profile.id === selectedDesktopServerProfileId
                           const hasWarning = profile.connectionStatus !== 'connected'
                           const warningClass =
-                            profile.connectionStatus === 'invalid_login'
+                            profile.connectionStatus === 'connecting'
+                              ? 'project-row__warning-inline--connecting'
+                              : profile.connectionStatus === 'invalid_login'
                               ? 'project-row__warning-inline--invalid'
                               : 'project-row__warning-inline--disconnected'
                           return (
@@ -349,7 +364,11 @@ export default function ProjectDialogs({
                               </span>
                               {hasWarning ? (
                                 <span className={`project-row__warning-inline ${warningClass}`} aria-hidden="true">
-                                  <WarningIcon />
+                                  {profile.connectionStatus === 'connecting' ? (
+                                    <i className="fa-solid fa-spinner fa-spin" />
+                                  ) : (
+                                    <WarningIcon />
+                                  )}
                                 </span>
                               ) : null}
                             </button>
@@ -415,6 +434,8 @@ export default function ProjectDialogs({
                   {renderProjectPickerContent(
                     desktopEnvironment && !selectedDesktopServerProfile
                       ? 'needs-profile'
+                      : desktopEnvironment && selectedDesktopServerProfile?.connectionStatus === 'connecting'
+                        ? 'connecting'
                       : desktopEnvironment && selectedDesktopServerProfile?.connectionStatus !== 'connected'
                         ? 'disconnected'
                         : desktopEnvironment && desktopProjectPickerLoading && !visibleProjects.length

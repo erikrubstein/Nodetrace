@@ -206,15 +206,32 @@ export function useAppShellCommands({
       if (nextState) {
         setDesktopServerState(nextState)
         configureApiBaseUrl(nextState.proxyBaseUrl || '')
+        const createdProfile = [...(nextState.profiles || [])].find((profile) => {
+          return (
+            String(profile?.baseUrl || '') === String(payload?.baseUrl || '').trim() &&
+            String(profile?.username || '').toLowerCase() === String(payload?.username || '').trim().toLowerCase()
+          )
+        })
+        if (createdProfile?.id) {
+          setDesktopAccountManagerFocusId(createdProfile.id)
+          setProjectPickerProfileId(createdProfile.id)
+          if (nextState.selectedProfileId !== createdProfile.id) {
+            const selectedState = await selectDesktopServerProfile(createdProfile.id)
+            if (selectedState) {
+              setDesktopServerState(selectedState)
+              configureApiBaseUrl(selectedState.proxyBaseUrl || '')
+            }
+          }
+        }
       }
-      return true
+      return nextState || true
     } catch (submitError) {
       setError(submitError.message)
       return false
     } finally {
       setBusy(false)
     }
-  }, [onCreateServerProfile, setBusy, setDesktopServerState, setError])
+  }, [onCreateServerProfile, setBusy, setDesktopAccountManagerFocusId, setDesktopServerState, setError, setProjectPickerProfileId])
 
   const updateServerProfile = useCallback(async (id, payload) => {
     if (typeof onUpdateServerProfile === 'function') {
@@ -228,7 +245,7 @@ export function useAppShellCommands({
         setDesktopServerState(nextState)
         configureApiBaseUrl(nextState.proxyBaseUrl || '')
       }
-      return true
+      return nextState || true
     } catch (submitError) {
       setError(submitError.message)
       return false

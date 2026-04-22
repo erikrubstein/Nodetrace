@@ -54,6 +54,7 @@ let desktopState = {
 let desktopProfileAuthStateById = {}
 const latestWorkspaceStateByWindowId = new Map()
 const PROFILE_STATUS_POLL_INTERVAL_MS = 5000
+const DEFAULT_REQUEST_TIMEOUT_MS = 3500
 
 function logDesktop(message) {
   const line = `[${new Date().toISOString()}] ${message}\n`
@@ -326,6 +327,10 @@ function requestJson(url, options = {}) {
           ? null
           : String(options.body)
     const headers = { ...(options.headers || {}) }
+    const timeoutMs =
+      Number.isFinite(Number(options.timeoutMs)) && Number(options.timeoutMs) > 0
+        ? Number(options.timeoutMs)
+        : DEFAULT_REQUEST_TIMEOUT_MS
     if (body != null && !Object.keys(headers).some((key) => key.toLowerCase() === 'content-length')) {
       headers['Content-Length'] = Buffer.byteLength(body)
     }
@@ -357,6 +362,9 @@ function requestJson(url, options = {}) {
     )
 
     request.on('error', reject)
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`Request timed out after ${timeoutMs}ms`))
+    })
     request.end(body)
   })
 }
@@ -464,11 +472,25 @@ async function fetchProfileAuthState(profile) {
   }
 }
 
-async function refreshProfileAuthState(profileId) {
+async function refreshProfileAuthState(profileId, options = {}) {
   const profile = desktopState.profiles.find((entry) => entry.id === profileId)
   if (!profile) {
     delete desktopProfileAuthStateById[profileId]
     return null
+  }
+
+  if (options.showConnecting) {
+    desktopProfileAuthStateById[profileId] = {
+      authenticated: false,
+      userId: null,
+      username: String(profile.username || ''),
+      captureSessionId: '',
+      connectionStatus: 'connecting',
+      error: '',
+    }
+    if (options.broadcastConnecting) {
+      broadcastDesktopServerState({ force: true })
+    }
   }
 
   const nextState = await fetchProfileAuthState(profile)
@@ -476,8 +498,15 @@ async function refreshProfileAuthState(profileId) {
   return nextState
 }
 
-async function refreshAllProfileAuthStates() {
-  await Promise.all(desktopState.profiles.map((profile) => refreshProfileAuthState(profile.id)))
+async function refreshAllProfileAuthStates(options = {}) {
+  await Promise.all(
+    desktopState.profiles.map((profile) =>
+      refreshProfileAuthState(profile.id, {
+        showConnecting: options.showConnecting === true,
+        broadcastConnecting: false,
+      }),
+    ),
+  )
   for (const profileId of Object.keys(desktopProfileAuthStateById)) {
     if (!desktopState.profiles.some((profile) => profile.id === profileId)) {
       delete desktopProfileAuthStateById[profileId]
@@ -890,7 +919,7 @@ async function upsertServerProfile(id, payload) {
     writeDesktopState()
   }
 
-  await refreshProfileAuthState(nextProfile.id)
+  await refreshProfileAuthState(nextProfile.id, { showConnecting: true, broadcastConnecting: true })
   broadcastDesktopServerState()
   return getDesktopServerState()
 }
@@ -913,7 +942,7 @@ async function selectServerProfile(id) {
   }
   desktopState.selectedProfileId = id
   writeDesktopState()
-  await refreshProfileAuthState(id)
+  await refreshProfileAuthState(id, { showConnecting: true, broadcastConnecting: true })
   broadcastDesktopServerState()
   return getDesktopServerState()
 }
@@ -1134,7 +1163,7 @@ async function deleteProfileAccount(profileId, username, activeProfileId = '') {
   }
   writeDesktopState()
   if (desktopState.selectedProfileId) {
-    await refreshProfileAuthState(desktopState.selectedProfileId)
+    await refreshProfileAuthState(desktopState.selectedProfileId, { showConnecting: true, broadcastConnecting: true })
   }
   broadcastDesktopServerState()
   return {
@@ -1211,7 +1240,13 @@ if (isMac) {
 }
 readDesktopState()
 await startDesktopProxy()
-await refreshAndBroadcastDesktopServerState()
-startProfileStatusPolling()
 logDesktop(`Desktop shell starting${rendererDevUrl ? ` with renderer ${rendererDevUrl}` : ''}`)
 createMainWindow({ showSplash: true })
+void refreshAllProfileAuthStates({ showConnecting: true })
+  .then(() => {
+    broadcastDesktopServerState({ force: true })
+  })
+  .catch((error) => {
+    logDesktop(`Initial desktop server refresh failed: ${error.message}`)
+  })
+startProfileStatusPolling()

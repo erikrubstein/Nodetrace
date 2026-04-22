@@ -22,6 +22,9 @@ function normalizeUsernameInput(value) {
 }
 
 function getConnectionLabel(profile) {
+  if (profile?.connectionStatus === 'connecting') {
+    return 'Connecting'
+  }
   if (profile?.connectionStatus === 'connected') {
     return 'Connected'
   }
@@ -32,6 +35,9 @@ function getConnectionLabel(profile) {
 }
 
 function getConnectionDescription(profile) {
+  if (profile?.connectionStatus === 'connecting') {
+    return 'Trying to reach the server and validate the saved credentials.'
+  }
   if (profile?.connectionStatus === 'connected') {
     return 'The server is reachable and the saved credentials are valid.'
   }
@@ -323,7 +329,9 @@ export default function DesktopServerManager({
                     const selected = profile.id === inspectedProfileId
                     const warning = profile.connectionStatus !== 'connected'
                     const warningClass =
-                      profile.connectionStatus === 'invalid_login'
+                      profile.connectionStatus === 'connecting'
+                        ? 'project-row__warning-inline project-row__warning-inline--connecting'
+                        : profile.connectionStatus === 'invalid_login'
                         ? 'project-row__warning-inline project-row__warning-inline--invalid'
                         : 'project-row__warning-inline project-row__warning-inline--disconnected'
                     return (
@@ -342,7 +350,11 @@ export default function DesktopServerManager({
                         </span>
                         {warning ? (
                           <span className={warningClass} aria-hidden="true">
-                            <WarningIcon />
+                            {profile.connectionStatus === 'connecting' ? (
+                              <i className="fa-solid fa-spinner fa-spin" />
+                            ) : (
+                              <WarningIcon />
+                            )}
                           </span>
                         ) : null}
                       </button>
@@ -507,7 +519,7 @@ export default function DesktopServerManager({
                     <div className="desktop-account-manager__section-heading">
                       <div className="desktop-account-manager__section-title">Server</div>
                       <IconButton
-                        className="tool-button"
+                        className="tool-button desktop-account-manager__server-edit-button"
                         disabled={busy}
                         onClick={openUrlPrompt}
                         tooltip="Edit Server URL"
@@ -611,6 +623,7 @@ export default function DesktopServerManager({
                       onClick={() => void handleSave()}
                       type="button"
                     >
+                      {busy ? <i aria-hidden="true" className="fa-solid fa-spinner fa-spin button-spinner" /> : null}
                       {editor.id ? 'Save Server Profile' : 'Add Server Profile'}
                     </button>
                   </>
