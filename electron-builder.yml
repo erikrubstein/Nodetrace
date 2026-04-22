@@ -18,6 +18,8 @@ mac:
   identity: "-"
   target:
     - dmg
+dmg:
+  icon: build/icon.icns
 win:
   icon: build/icon.ico
   target:
