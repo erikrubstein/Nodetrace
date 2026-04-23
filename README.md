@@ -101,6 +101,8 @@ Typical workflow:
   Starts only the Vite renderer workspace.
 - `npm run build:web`
   Builds the web renderer into `dist/`.
+- `npm run bundle:web`
+  Builds the hosted web bundle zip for deployment into a server repo.
 - `npm run preview:web`
   Serves the built renderer locally.
 - `npm run dist:win`
@@ -120,6 +122,12 @@ Web build:
 npm run build:web
 ```
 
+Hosted web bundle zip:
+
+```bash
+npm run bundle:web
+```
+
 Windows installer:
 
 ```bash
@@ -133,6 +141,7 @@ npm run dist:mac
 ```
 
 Generated desktop installers are written to `release/`.
+The hosted web bundle zip is written to `release/web/`.
 
 ## Testing
 
