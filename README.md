@@ -187,6 +187,3 @@ NODETRACE_E2E_SERVER_URL=http://127.0.0.1:3001 npm run test:e2e
    - `npm run lint`
    - `npm run test:e2e` when the change affects primary user flows
 
-## License
-
-[MIT](./LICENSE)
